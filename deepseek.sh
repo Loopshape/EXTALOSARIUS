@@ -9,7 +9,7 @@ set -euo pipefail
 OLLAMA_HOST="${OLLAMA_HOST:-localhost:11434}"
 BACKUP_DIR="./backup_$(date +%Y%m%d_%H%M%S)"
 LOG_FILE="./deepseek_analysis.log"
-MODELS=("cube" "core" "loop" "wave" "coin" "code")
+MODELS=("cube" "core" "loop" "wave" "line" "coin" "code" "work")
 
 # Color codes for output
 RED='\033[0;31m'

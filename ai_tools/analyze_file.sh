@@ -1,10 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
 FILE="$1"
-if [[ -z "$FILE" || ! -f "$FILE" ]]; then
-    echo "Usage: $0 <file>"
-    exit 1
-fi
-echo "AI File Analysis Tool"
+[[ -z "$FILE" || ! -f "$FILE" ]] && echo "Usage: $0 <file>" && exit 1
 echo "File: $FILE"
-echo "Type: $(file -b "$FILE")"
-echo "Size: $(stat -c%s "$FILE") bytes"
+file -b "$FILE"
+stat -c '%s bytes' "$FILE"

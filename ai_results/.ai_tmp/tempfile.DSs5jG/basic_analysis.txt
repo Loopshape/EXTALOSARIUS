@@ -1,0 +1,4 @@
+File: .ai_tmp/tempfile.DSs5jG
+Type: ASCII text, with no line terminators
+Size: 7
+MD5: 27ce67f5c7c931d0247a83592b6026d8

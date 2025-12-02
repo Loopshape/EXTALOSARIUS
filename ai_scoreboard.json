@@ -68,5 +68,12 @@
     "total_bytes": 450,
     "avg_latency": 2013,
     "score": 39
+  },
+  "core work cube line code coin wave loop deepseek-v3.1:671b-cloud": {
+    "runs": 3,
+    "applied": 0,
+    "total_bytes": 0,
+    "avg_latency": 0,
+    "score": 50
   }
 }

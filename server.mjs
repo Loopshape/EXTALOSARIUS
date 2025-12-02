@@ -64,32 +64,29 @@ async function htmlEnhance(file){
 }
 
 // ----------------------- Ollama / Simulation -----------------------
-async function runOllamaPrompt(prompt, ws){
+async function runOrchestrationPrompt(prompt, ws){
     log('[PROMPT]', prompt);
     try{
-        execSync('ollama --version',{stdio:'ignore'});
-        log('[OLLAMA] Running real models');
-        LOCAL_MODELS.forEach(model=>{
-            const run = spawn('ollama',['run',model+':latest'],{stdio:['pipe','pipe','pipe']});
-            run.stdin.write(prompt); run.stdin.end();
-            run.stdout.on('data',data=>ws.send(JSON.stringify({type:'modelProgress',model,progress:data.toString()})));
+        log('[ORCHESTRATOR] Running orchestrator.py with prompt');
+        const orchestratorProcess = spawn('python3', ['orchestrator.py', prompt], {stdio: ['pipe', 'pipe', 'pipe']});
+
+        orchestratorProcess.stdout.on('data', data => {
+            ws.send(JSON.stringify({type: 'orchestratorProgress', output: data.toString()}));
         });
-        setTimeout(()=>ws.send(JSON.stringify({type:'final',result:'[OLLAMA FINAL RESULT]'})),2000);
+
+        orchestratorProcess.stderr.on('data', data => {
+            logError('[ORCHESTRATOR ERROR]', data.toString());
+            ws.send(JSON.stringify({type: 'orchestratorError', error: data.toString()}));
+        });
+
+        orchestratorProcess.on('close', code => {
+            logSuccess(`[ORCHESTRATOR] Process exited with code ${code}`);
+            ws.send(JSON.stringify({type: 'orchestratorComplete', code: code}));
+        });
+
     }catch(e){
-        logWarn('Ollama not found — simulated mode');
-        LOCAL_MODELS.forEach(model=>{
-            let progress=0;
-            const interval=setInterval(()=>{
-                progress+=Math.floor(Math.random()*10)+1;
-                if(progress>100) progress=100;
-                ws.send(JSON.stringify({type:'modelProgress',model,progress}));
-                if(progress>=100){
-                    clearInterval(interval);
-                    ws.send(JSON.stringify({type:'modelDone',model,result:`[SIM ${model.toUpperCase()}] final chunk`}));
-                }
-            },100+Math.random()*150);
-        });
-        setTimeout(()=>ws.send(JSON.stringify({type:'final',result:LOCAL_MODELS.map(m=>`[SIM ${m}]`).join('\n')}),2500);
+        logError('Failed to spawn orchestrator.py:', e);
+        ws.send(JSON.stringify({type:'error', message:'Failed to start orchestration: '+e.message}));
     }
 }
 
@@ -109,6 +106,29 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(process.cwd())));
 
+// --- REST API Endpoints ---
+app.get('/api/memory-storage', async (req, res) => {
+    const memoryFilePath = path.join(process.cwd(), 'ai_memory.json');
+    try {
+        const memoryContent = await fs.readFile(memoryFilePath, 'utf8');
+        res.json(JSON.parse(memoryContent));
+    } catch (error) {
+        logError('Error reading ai_memory.json:', error);
+        res.status(500).json({ error: 'Failed to retrieve AI memory storage.' });
+    }
+});
+
+app.get('/api/device-entropy', async (req, res) => {
+    const entropyFilePath = path.join(process.cwd(), '.ai_tmp', '_current_orchestration_state.json');
+    try {
+        const entropyContent = await fs.readFile(entropyFilePath, 'utf8');
+        res.json(JSON.parse(entropyContent));
+    } catch (error) {
+        logError('Error reading _current_orchestration_state.json:', error);
+        res.status(500).json({ error: 'Failed to retrieve device entropy (orchestration state).' });
+    }
+});
+
 const server = app.listen(PORT,()=>logSuccess('Cockpit at http://localhost:'+PORT));
 const wss = new WebSocketServer({server});
 
@@ -122,7 +142,7 @@ wss.on('connection', ws=>{
                 case 'prompt':
                     // Optionally enhance HTML first
                     if(data.file) await htmlEnhance(data.file);
-                    await runOllamaPrompt(data.prompt, ws);
+                    await runOrchestrationPrompt(data.prompt, ws);
                     break;
                 case 'fileOp':
                     const result = await processFileOperation(data);

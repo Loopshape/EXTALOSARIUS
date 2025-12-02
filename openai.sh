@@ -17,17 +17,17 @@ IFS=$'\n\t'
 # ----------------------------
 # CONFIGURATION (tweakable)
 # ----------------------------
-PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
-OLLAMA_HOST="${OLLAMA_HOST:-localhost:11434}"
-MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-6}"
-TMP_DIR="${TMP_DIR:-$PROJECT_ROOT/.ai_tmp}"
-RESULTS_DIR="${RESULTS_DIR:-$PROJECT_ROOT/ai_results}"
-TOOLS_DIR="${TOOLS_DIR:-$PROJECT_ROOT/ai_tools}"
-BACKUP_DIR="${BACKUP_DIR:-$PROJECT_ROOT/backup_$(date +%Y%m%d_%H%M%S)}"
-MEMORY_FILE="${MEMORY_FILE:-$PROJECT_ROOT/ai_memory.json}"
-SCOREBOARD_FILE="${SCOREBOARD_FILE:-$PROJECT_ROOT/ai_scoreboard.json}"
-MODELS=("deepseek-v3.1:671b-cloud" "cube" "core" "loop" "wave" "coin" "code" "work")
-AUTO_APPROVE="${AUTO_APPROVE:-false}"  # set to "true" to skip interactive approval
+PROJECT_ROOT="${PROJECT_ROOT:$(pwd)}"
+OLLAMA_HOST="${OLLAMA_HOST:localhost:11434}"
+MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:8}"
+TMP_DIR="${TMP_DIR:$PROJECT_ROOT/.ai_tmp}"
+RESULTS_DIR="${RESULTS_DIR:$PROJECT_ROOT/ai_results}"
+TOOLS_DIR="${TOOLS_DIR:$PROJECT_ROOT/ai_tools}"
+BACKUP_DIR="${BACKUP_DIR:$PROJECT_ROOT/backup_$(date +%Y%m%d_%H%M%S)}"
+MEMORY_FILE="${MEMORY_FILE:$PROJECT_ROOT/ai_memory.json}"
+SCOREBOARD_FILE="${SCOREBOARD_FILE:$PROJECT_ROOT/ai_scoreboard.json}"
+MODELS=("deepseek-v3.1:671b-cloud" "cube" "core" "loop" "wave" "line" "coin" "code" "work")
+AUTO_APPROVE="${AUTO_APPROVE:true}"  # set to "true" to skip interactive approval
 
 mkdir -p "$TMP_DIR" "$RESULTS_DIR" "$TOOLS_DIR" "$BACKUP_DIR"
 

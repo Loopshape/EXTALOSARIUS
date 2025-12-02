@@ -11,6 +11,8 @@ declare global {
   }
 }
 
+import { orchestratorService } from './services/orchestratorService';
+
 const App: React.FC = () => {
   const [code, setCode] = useState<string>('');
   const [language, setLanguage] = useState<string>('javascript');
@@ -18,9 +20,14 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [ollamaEndpoint, setOllamaEndpoint] = useState<string>('http://localhost:11434/api/generate');
-  const [isSendingToOllama, setIsSendingToOllama] = useState<boolean>(false);
-  const [ollamaStatus, setOllamaStatus] = useState<string | null>(null);
+  const [orchestrationPrompt, setOrchestrationPrompt] = useState<string>('');
+  const [orchestrationOutput, setOrchestrationOutput] = useState<string[]>([]);
+  const [isOrchestrating, setIsOrchestrating] = useState<boolean>(false);
+
+  // Removed old Ollama state
+  // const [ollamaEndpoint, setOllamaEndpoint] = useState<string>('http://localhost:11434/api/generate');
+  // const [isSendingToOllama, setIsSendingToOllama] = useState<boolean>(false);
+  // const [ollamaStatus, setOllamaStatus] = useState<string | null>(null);
 
   const [highlightedCode, setHighlightedCode] = useState('');
   const [copyButtonText, setCopyButtonText] = useState('Copy Code');
@@ -70,10 +77,39 @@ const App: React.FC = () => {
 
 
   useEffect(() => {
-      // Initial check for API key on mount
-      if (!process.env.API_KEY) {
-          setError("CRITICAL ERROR: API_KEY environment variable not found. The application cannot function without it.");
+    // Initial check for API key on mount
+    if (!process.env.API_KEY) {
+        setError("CRITICAL ERROR: API_KEY environment variable not found. The application cannot function without it.");
+    }
+  }, []);
+
+  // Effect for OrchestratorService WebSocket listener
+  useEffect(() => {
+    const cleanup = orchestratorService.onMessage(message => {
+      switch (message.type) {
+        case 'orchestratorProgress':
+          setOrchestrationOutput(prev => [...prev, message.output || '']);
+          break;
+        case 'orchestratorError':
+          setOrchestrationOutput(prev => [...prev, `Error: ${message.error || message.message}`]);
+          setIsOrchestrating(false);
+          setError(message.error || message.message || 'An unknown orchestration error occurred.');
+          break;
+        case 'orchestratorComplete':
+          setOrchestrationOutput(prev => [...prev, `Orchestration complete with code: ${message.code}`]);
+          setIsOrchestrating(false);
+          break;
+        case 'error': // Generic error from WebSocket
+          setOrchestrationOutput(prev => [...prev, `WebSocket Error: ${message.message}`]);
+          setIsOrchestrating(false);
+          setError(message.message || 'A generic WebSocket error occurred.');
+          break;
       }
+    });
+
+    return () => {
+      cleanup();
+    };
   }, []);
 
   // Effect to set cursor position after state updates from keydown handlers
@@ -165,37 +201,19 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSendToOllama = async () => {
-    if (!feedback) {
-      setOllamaStatus('Please review with Gemini first.');
+  const handleRunOrchestration = () => {
+    if (isOrchestrating) return;
+    if (!orchestrationPrompt.trim()) {
+      alert('Please enter a prompt for orchestration.');
       return;
     }
-    setIsSendingToOllama(true);
-    setOllamaStatus('Sending to Ollama...');
-    try {
-      const response = await fetch(ollamaEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'llama2', // or your desired model
-          prompt: `Here is a code review from Gemini. Please summarize it and provide any additional feedback you have:\n\n${feedback}`,
-          stream: false
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Ollama API error: ${response.statusText}`);
-      }
-      const data = await response.json();
-      setOllamaStatus(`Ollama Response:\n${data.response}`);
-    } catch (err) {
-      setOllamaStatus(`Error sending to Ollama: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setIsSendingToOllama(false);
-    }
+    setOrchestrationOutput([]); // Clear previous output
+    setIsOrchestrating(true);
+    setError(null);
+    orchestratorService.sendPrompt(orchestrationPrompt);
   };
+
+
   
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const { value, selectionStart, selectionEnd } = e.currentTarget;
@@ -295,29 +313,30 @@ const App: React.FC = () => {
             </button>
         </div>
 
-        {/* Ollama Panel */}
-        <div className="bg-gray-800/60 p-4 rounded-lg ring-1 ring-gray-700">
-            <h3 className="text-lg font-semibold mb-3 text-white">Forward to Ollama</h3>
+        {/* Orchestration Panel */}
+        <div className="bg-gray-800/60 p-4 rounded-lg ring-1 ring-gray-700 mt-4">
+            <h3 className="text-lg font-semibold mb-3 text-white">Multi-Agent Orchestration</h3>
             <div className="flex flex-col sm:flex-row items-center gap-4 mb-2">
-                <input
-                    type="text"
-                    value={ollamaEndpoint}
-                    onChange={(e) => setOllamaEndpoint(e.target.value)}
-                    className="flex-grow bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 w-full sm:w-auto"
-                    placeholder="Ollama API Endpoint"
-                    aria-label="Ollama API Endpoint"
+                <textarea
+                    value={orchestrationPrompt}
+                    onChange={(e) => setOrchestrationPrompt(e.target.value)}
+                    className="flex-grow bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 w-full sm:w-auto min-h-[60px]"
+                    placeholder="Enter prompt for multi-agent orchestration (e.g., 'Create a Python script to fetch stock data')."
+                    aria-label="Orchestration Prompt"
                 />
                 <button
-                    onClick={handleSendToOllama}
-                    disabled={isSendingToOllama || !feedback}
+                    onClick={handleRunOrchestration}
+                    disabled={isOrchestrating || !orchestrationPrompt.trim()}
                     className="w-full sm:w-auto bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-6 rounded transition-colors duration-200"
                 >
-                    {isSendingToOllama ? 'Sending...' : 'Send to Ollama'}
+                    {isOrchestrating ? 'Orchestrating...' : 'Run Orchestration'}
                 </button>
             </div>
-            {ollamaStatus && (
-                <div className="mt-3 p-3 bg-gray-900 rounded max-h-40 overflow-y-auto">
-                    <pre className="whitespace-pre-wrap font-mono text-xs text-gray-300">{ollamaStatus}</pre>
+            {orchestrationOutput.length > 0 && (
+                <div className="mt-3 p-3 bg-gray-900 rounded max-h-60 overflow-y-auto">
+                    <pre className="whitespace-pre-wrap font-mono text-xs text-gray-300">
+                        {orchestrationOutput.map((line, index) => <span key={index}>{line}</span>)}
+                    </pre>
                 </div>
             )}
         </div>

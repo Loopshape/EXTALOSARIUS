@@ -8,11 +8,17 @@ import json
 import time
 import sys # Import sys to access command-line arguments
 from typing import Dict, Any, List
+from pathlib import Path # Import pathlib
 
 import aiohttp
 
 # --- Configuration -----------------------------------------------------------
 OLLAMA_BASE_URL = "http://localhost:11434/api/generate"
+
+# Define a temporary directory for orchestration state
+AI_TMP_DIR = Path(__file__).parent / '.ai_tmp'
+AI_TMP_DIR.mkdir(parents=True, exist_ok=True) # Ensure the directory exists
+
 # Mapping of conceptual roles to specific Ollama model names
 AGENT_MODELS = {
     "cube": "cube",         # Delegator / Orchestrator
@@ -144,21 +150,48 @@ class Agent:
 
 class Cube(Agent): # Orchestrator
     def _create_meta_prompt(self, base_prompt: str, state: Dict) -> str:
-        # current_entropy = state.get('current_entropy_score', 0.0)
-        # state_json = json.dumps(state, indent=2) 
-        return "You are 'cube', the orchestrator. Debugging: simplified prompt."
+        current_entropy = state.get('current_entropy_score', 0.0)
+        status_report = f"""
+Orchestration Goal: {base_prompt}
+Current Action: {state.get('current_action', 'INIT')}
+Current Entropy Score: {current_entropy:.2f}
+Plan: {state.get('plan', 'None yet.')}
+Success Criteria: {state.get('success_criteria', 'None yet.')}
+Valid Chunks: {len([k for k, v in state.get('validations', {}).items() if v == 'VALID'])}
+Invalid Chunks: {len([k for k, v in state.get('validations', {}).items() if v.startswith('INVALID')])}
+Last Advice: {state.get('advice', 'None.')}
+Prompt Integrity: {state.get('prompt_integrity', 'Not checked.')}
+Resource Management: {state.get('resource_management', 'Not assessed.')}
+        """
+        return f"""You are 'cube', the supreme orchestrator of a multi-agent system. Your task is to analyze the current state of the project and decide the next optimal action to drive the project towards successfully achieving the 'Orchestration Goal' while minimizing the 'Current Entropy Score'.
+
+        Based on the following status report, you must choose one of these actions: 'PLAN', 'EXECUTE', 'VALIDATE', 'REFINE', 'COMPOSE', or 'COMPLETE'.
+        'COMPLETE' should only be chosen if the 'final_script' is present and seems to meet the 'Success Criteria' and 'Current Entropy Score' is low (e.g., < 0.3).
+
+        Status Report:
+        {status_report}
+
+        Your decision MUST be a single word, representing the chosen action. Do not add any other text.
+        """
     def _process_output(self, output: str, state: Dict):
-        state["current_action"] = output.replace('"', '').strip()
+        # Ensure the output is a single, valid action
+        action = output.strip().upper()
+        if action not in ["PLAN", "EXECUTE", "VALIDATE", "REFINE", "COMPOSE", "COMPLETE"]:
+            print(f"Warning: Cube returned invalid action '{action}'. Defaulting to PLAN.")
+            action = "PLAN" # Fallback
+        state["current_action"] = action
 
 class Wave(Agent): # Promiser
     def _create_meta_prompt(self, base_prompt: str, state: Dict) -> str:
         return f"""You are 'wave', the promiser. Your task is to define the success criteria for the prompt: '{base_prompt}'.
-Break it down into a clear, numbered list of requirements.
+Break it down into a clear, numbered list of concise requirements. Focus on measurable and achievable criteria.
 Example: 1. Script must be in Python. 2. It must achieve X. 3. It must handle error Y.
-Current success criteria: {state.get('success_criteria', 'None')}. Refine if needed, otherwise re-state."""
+Current success criteria: {state.get('success_criteria', 'None')}. Refine if needed, otherwise re-state.
+Your output MUST be ONLY the numbered list of success criteria, with no additional conversational text.
+"""
     def _process_output(self, output: str, state: Dict):
-        if 'success_criteria' not in state:
-            state['success_criteria'] = output
+        # Always update with the latest success criteria from Wave
+        state['success_criteria'] = output
 
 class Core(Agent): # Executor
     def _create_meta_prompt(self, base_prompt: str, state: Dict) -> str:
@@ -168,7 +201,9 @@ Success Criteria: {state.get('success_criteria')}
 Current Code Plan: {state.get('plan')}
 Existing Chunks: {list(state.get('code_chunks', {}).keys())}
 Advisor's Last Remark: {state.get('advice')}
-Write the next necessary code chunk. Enclose the code within ```python ... ```."""
+Write the next necessary code chunk. Enclose the code within ```python ... ```.
+Your output MUST contain ONLY the Python code chunk, formatted strictly within ```python ... ``` tags, with no extra conversational text.
+"""
     def _process_output(self, output: str, state: Dict):
         if "```python" in output:
             code_chunk = output.split("```python")[1].split("```")[0].strip()
@@ -180,12 +215,13 @@ class Work(Agent): # Validator
     def _create_meta_prompt(self, base_prompt: str, state: Dict) -> str:
         last_chunk_id = state.get('last_chunk_id', 'None')
         chunk_to_validate = state.get('code_chunks', {}).get(last_chunk_id, "No new chunk to validate.")
-        return f"""You are 'work', the validator. Analyze the following Python code chunk for correctness, syntax errors, and adherence to the plan.
+        return f"""You are 'work', the validator. Analyze the following Python code chunk for correctness, syntax errors, and adherence to the plan and success criteria.
 Code Chunk ('{last_chunk_id}'):
 {chunk_to_validate}
 
 Success Criteria: {state.get('success_criteria')}
-Respond with 'VALID' if it's good, or 'INVALID:' followed by a brief reason for rejection."""
+Respond STRICTLY with 'VALID' if it's good, or 'INVALID:' followed by a brief, actionable reason for rejection. Do not include any other text.
+"""
     def _process_output(self, output: str, state: Dict):
         state.setdefault('validations', {})
         last_chunk_id = state.get('last_chunk_id')
@@ -198,12 +234,15 @@ Respond with 'VALID' if it's good, or 'INVALID:' followed by a brief reason for 
 
 class Loop(Agent): # Advisor
     def _create_meta_prompt(self, base_prompt: str, state: Dict) -> str:
-        return f"""You are 'loop', the advisor. Review the overall plan and recent progress.
+        return f"""You are 'loop', the advisor. Review the overall plan, recent progress, and current shared state.
 Goal: {base_prompt}
 Plan: {state.get('plan', 'Not defined yet.')}
 Validated Chunks: {[k for k, v in state.get('validations', {}).items() if v == 'VALID']}
 Failed Chunks: {[k for k, v in state.get('validations', {}).items() if v.startswith('INVALID')]}
-Based on this, provide a concise next step or refinement for the plan. If no plan exists, create one."""
+Shared State Summary: {json.dumps({k: v for k, v in state.items() if k not in ['code_chunks', 'validations']}, indent=2)}
+Based on this, provide a concise, actionable next step or refinement for the plan. If no plan exists, create one. Focus on overcoming obstacles or moving towards completion.
+Your output MUST be a clear, concise instruction or a refined plan.
+"""
     def _process_output(self, output: str, state: Dict):
         if 'plan' not in state or 'refinement' in output.lower():
             state['plan'] = output
@@ -211,10 +250,13 @@ Based on this, provide a concise next step or refinement for the plan. If no pla
 
 class Code(Agent): # Composer
     def _create_meta_prompt(self, base_prompt: str, state: Dict) -> str:
-        return f"""You are 'code', the composer. Assemble the validated code chunks into a single, coherent script.
+        return f"""You are 'code', the composer. Your task is to assemble the validated code chunks into a single, coherent, and executable Python script.
 Validated Chunks:
 {json.dumps({k: v for k, v in state.get('code_chunks', {}).items() if state.get('validations', {}).get(k) == 'VALID'}, indent=2)}
-Add necessary imports, headers, and main execution blocks. Ensure correct indentation and order."""
+Success Criteria: {state.get('success_criteria')}
+Ensure all necessary imports are at the top. Add appropriate function definitions and a main execution block (e.g., `if __name__ == "__main__":`). Ensure correct indentation, logical flow, and order for a fully functional script.
+Enclose the final script within ```python ... ```. Your output MUST contain ONLY the Python script, formatted strictly within ```python ... ``` tags, with no extra conversational text.
+"""
     def _process_output(self, output: str, state: Dict):
         if "```python" in output:
             final_script = output.split("```python")[1].split("```")[0].strip()
@@ -227,8 +269,8 @@ class Line(Agent): # Resource Manager
 Current Goal: {base_prompt}
 Current State: {json.dumps(state, indent=2)}
 
-Based on this, provide a concise assessment of complexity and scope. Suggest any adjustments needed to keep the project manageable and efficient. Focus on resource optimization and complexity reduction.
-Respond with a summary of complexity and scope, followed by suggestions if any.
+Based on this, provide a concise assessment of complexity and scope. If any issues are found, suggest specific, actionable adjustments needed to keep the project manageable and efficient. Focus on resource optimization and complexity reduction. If no issues, state 'RESOURCE MANAGEMENT OK'.
+Your output MUST be a summary of complexity/scope and/or actionable suggestions, or 'RESOURCE MANAGEMENT OK'.
 """
     def _process_output(self, output: str, state: Dict):
         state['resource_management'] = output
@@ -241,6 +283,7 @@ Initial Prompt: {base_prompt}
 Current State: {json.dumps(state, indent=2)}
 
 Based on this analysis, provide a concise integrity report. If there are concerns, list them clearly. If the prompt and state appear sound, state 'INTEGRITY OK'.
+Your output MUST be a concise integrity report or 'INTEGRITY OK'.
 """
     def _process_output(self, output: str, state: Dict):
         state['prompt_integrity'] = output
@@ -333,6 +376,9 @@ async def run_orchestration(initial_prompt: str): # Renamed main to run_orchestr
             # After agents have run, recalculate entropy for the next cycle
             # (or use the one already calculated at the beginning if Cube doesn't need intermediate results)
             # For now, let's keep it simple and calculate at the start of each cycle.
+            # Save shared state to a temporary file for external access (rehashed indexings)
+            with open(AI_TMP_DIR / "_current_orchestration_state.json", "w") as f:
+                json.dump(shared_state, f, indent=2)
             
     # --- Final Answer Responsibility ------------------------------------------
     print("\n" + "="*80)

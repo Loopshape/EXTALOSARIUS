@@ -1,168 +1,201 @@
 #!/usr/bin/env bash
+# ai_prime.sh – orchestrator mit genesis-hash, rehash und parallelen Agenten
 
-# Author: Aris Arjuna Noorsanto <exe.opcode@gmail.com>
+set -euo pipefail
+OLLAMA_HOST="${OLLAMA_HOST:-localhost}"
+OLLAMA_PORT="${OLLAMA_PORT:-11434}"
+OLLAMA_API="http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/generate"
+STREAM=true
+KEEP_ALIVE="5m"
 
-# AI / AGI / AIM Unified Processing Tool
-# Termux/Proot-Distro compatible with Ollama gemma3:1b
-
-set -eu
-IFS=$'\n\t'
-
-# -----------------------
-# CONFIG
-# -----------------------
-HOME_ROOT="/home/loop/CODERS-AI"
-BACKUP_DIR="$HOME_ROOT/.ai_backups"
-mkdir -p "$BACKUP_DIR"
-
-UNIVERSAL_LAW=$(cat <<'EOF'
-:bof:
-redo complete layout and design an advanced symetrics to proximity accordance for dedicated info-quota alignments, which grant a better adjustment for leading besides subliminal range compliance promisings, that affair any competing content relations into a cognitive intuitition guidance comparison between space and gap implies, that are suggesting the viewer a subcoordinated experience alongside repetitive tasks and stoic context sortings, all cooperational aligned to timed subjects of importance accordingly to random capacity within builds of data statements, that prognose the grid reliability of a mockup as given optically acknowledged for a more robust but also as attractive rulership into golden-ratio item handling
-:eof:
-EOF
+declare -A MODELS=(
+  ["cube"]="cube"
+  ["core"]="core"
+  ["loop"]="loop"
+  ["wave"]="wave"
+  ["line"]="line"
+  ["coin"]="coin"
+  ["code"]="code"
+  ["work"]="work"
 )
 
-# -----------------------
-# HELPER LOGGING
-# -----------------------
-log_info()    { printf '\033[34m[*] %s\033[0m\n' "$*"; }
-log_success() { printf '\033[32m[+] %s\033[0m\n' "$*"; }
-log_warn()    { printf '\033[33m[!] %s\033[0m\n' "$*"; }
-log_error()   { printf '\033[31m[-] %s\033[0m\n' "$*"; }
+LOGDIR="${HOME}/.ai_prime_logs"
+mkdir -p "$LOGDIR"
 
-backup_file() {
-    local file="$1"
-    [ -f "$file" ] || return
-    local ts
-    ts=$(date +%Y%m%d%H%M%S)
-    cp "$file" "$BACKUP_DIR/$(basename "$file").$ts.bak"
-    log_info "Backup created for $file -> $BACKUP_DIR"
+call_model() {
+  local agent=$1 prompt=$2 model="${MODELS[$agent]}"
+  local curl_output
+  curl_output=$(jq -nc --arg m "$model" --arg p "$prompt" --arg ka "$KEEP_ALIVE" --argjson st "$STREAM" \
+    '{model:$m,prompt:$p,keep_alive:$ka,stream:$st}' |
+  curl -s -w "%{http_code}" "$OLLAMA_API" -H "Content-Type: application/json" -d @- || echo "CURL_ERROR")
+
+  local http_code="${curl_output: -3}"
+  local response_body="${curl_output:0:$((${#curl_output}-3))}"
+
+  if [[ "$http_code" -ne 200 ]]; then
+    echo "Error calling Ollama API for agent $agent (model: $model). HTTP Code: $http_code. Response: $response_body" >&2
+    return 1
+  else
+    echo "$response_body"
+  fi
 }
 
-fetch_url() {
-    local url="$1"
-    if command -v curl >/dev/null 2>&1; then
-        curl -sL "$url"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO- "$url"
-    else
-        log_error "curl or wget required to fetch URLs"
-    fi
+orchestrate() {
+  local hash=$1 prompt=$2
+  for agent in "${!MODELS[@]}"; do
+    (
+      local msg="GENESIS_HASH:$hash\nPROMPT:$prompt\nROLE:$agent"
+      call_model "$agent" "$msg" | while read -r line; do
+        echo "[$agent] $line"
+        echo "$line" >> "$LOGDIR/$agent.log"
+      done
+    ) &
+  done
+  wait
 }
 
-get_prompt() {
-    local input="$1"
-    case "$input" in
-        http://*|https://*) fetch_url "$input" ;;
-        *) [ -f "$input" ] && cat "$input" || echo "$input" ;;
+orchestrate_for_rewrite() {
+  local hash=$1 prompt=$2
+  local agent="code" # Designate 'code' agent for rewrite
+  local rewrite_output_file="${LOGDIR}/ai_rewrite_${hash}.log" # Unique log file for each rewrite
+
+  # Ensure the log file is empty before starting
+  > "$rewrite_output_file"
+
+  echo "DEBUG: Calling model for agent '$agent' with prompt (first 100 chars): ${prompt:0:100}..." >&2
+
+  (
+    local msg="GENESIS_HASH:$hash\nPROMPT:$prompt\nROLE:$agent"
+    # Call model and pipe output to log file
+    call_model "$agent" "$msg" | while read -r line; do
+      echo "$line" >> "$rewrite_output_file"
+    done
+  )
+  # Wait for the background process to complete, using its PID if available
+  # For simplicity here, we'll just wait a bit, or assume the subshell completes if not in background
+  # Since it's not truly backgrounded with '&' anymore, this wait isn't strictly necessary for the subshell itself
+
+  # Read the captured content and return it
+  if [ -s "$rewrite_output_file" ]; then # Check if file exists and is not empty
+    cat "$rewrite_output_file"
+  else
+    echo "DEBUG: No content captured for rewrite from agent '$agent'." >&2
+    return 1
+  fi
+}
+
+compute_rehash() {
+  local buf=""
+  for a in "${!MODELS[@]}"; do
+    buf+=$(tail -n1 "$LOGDIR/$a.log" 2>/dev/null)
+  done
+  echo -n "$buf" | sha256sum | awk '{print $1}'
+}
+
+main() {
+  local hash
+  hash=$(date +%s%N | sha256sum | awk '{print $1}')
+  local prompt_from_file=""
+  local prompt_from_url=""
+  local script_to_rewrite=""
+  local full_prompt_context="" # Renamed from full_prompt to avoid confusion
+  local cli_extracted_prompts="" # New variable for CLI extracted prompts
+
+  # Argument parsing
+  while getopts "f:u:r:" opt; do
+    case "$opt" in
+      f) 
+        if [ -f "$OPTARG" ]; then
+          prompt_from_file=$(cat "$OPTARG") || { echo "Error reading file: $OPTARG" >&2; exit 1; }
+        else
+          echo "File not found: $OPTARG" >&2; exit 1
+        fi
+        ;;
+      u) 
+        prompt_from_url=$(curl -s "$OPTARG")
+        if [ $? -ne 0 ]; then
+          echo "Error fetching content from URL: $OPTARG" >&2
+          exit 1
+        fi
+        ;;
+      r)
+        script_to_rewrite="$OPTARG"
+        if [ ! -f "$script_to_rewrite" ]; then
+          echo "Script to rewrite not found: $script_to_rewrite" >&2; exit 1
+        fi
+        ;;
+      \?) echo "Invalid option -$OPTARG" >&2; exit 1 ;;
     esac
-}
+  done
+  shift $((OPTIND-1))
 
-# -----------------------
-# HTML/JS/DOM ENHANCEMENT
-# -----------------------
-html_enhance() {
-    local file="$1"
-    [ -f "$file" ] || { log_warn "HTML file not found: $file"; return; }
-    backup_file "$file"
-    log_info "Enhancing HTML/JS/DOM for $file..."
-
-    local content
-    content=$(<"$file")
-
-    # Inject simple neon theme if <head> exists
-    if [[ "$content" == *"<head>"* && "$content" != *"--main-bg"* ]]; then
-        content=$(echo "$content" | sed -E "s|<head>|<head><style>:root{--main-bg:#8B0000;--main-fg:#fff;--btn-color:#ff00ff;--link-color:#ffff00;}</style>|")
+  # Process remaining positional arguments for hyphen-encapsulated strings
+  for arg in "$@"; do
+    if [[ "$arg" =~ ^-(.+)-$ ]]; then
+      local extracted_string="${BASH_REMATCH[1]}"
+      if [[ -n "$extracted_string" ]]; then
+        if [[ -n "$cli_extracted_prompts" ]]; then
+          cli_extracted_prompts+="\n"
+        fi
+        cli_extracted_prompts+="--- CLI Argument Start ---\n$extracted_string\n--- CLI Argument End ---"
+      fi
     fi
+  done
 
-    # Add AI comment to JS functions (simple regex)
-    if command -v perl >/dev/null 2>&1; then
-        content=$(echo "$content" | perl -0777 -pe 's|function\s+([a-zA-Z0-9_]+)\s*\((.*?)\)\s*\{(?!\s*\/\*\s*AI:)|function \1(\2) { /* AI: optimize this function */ |g')
+  # If content from file or url is provided, use it as part of the full prompt
+  if [[ -n "$prompt_from_file" ]]; then
+    full_prompt_context+="--- File Content Start ---\n$prompt_from_file\n--- File Content End ---\n\n"
+  fi
+  if [[ -n "$prompt_from_url" ]]; then
+    full_prompt_context+="--- URL Content Start ---\n$prompt_from_url\n--- URL Content End ---\n\n"
+  fi
+  # Add CLI extracted prompts to the full prompt context
+  if [[ -n "$cli_extracted_prompts" ]]; then
+    full_prompt_context+="\n$cli_extracted_prompts\n\n"
+  fi
+
+  if [[ -n "$script_to_rewrite" ]]; then
+    # Rewrite Mode
+    echo "Entering rewrite mode for: $script_to_rewrite"
+    local original_script_content=$(cat "$script_to_rewrite")
+    local rewrite_prompt="${full_prompt_context}--- Script to Refine Start ---\n${original_script_content}\n--- Script to Refine End ---\n\nInstruction: Refine the provided script, ensuring syntax correctness, best practices, and improved clarity. Provide only the refined script content. Do not include any conversational text or explanations outside of the code. If the script is already perfect, return it as is."
+
+    echo "Sending rewrite prompt to AI..."
+    local refined_script
+    if ! refined_script=$(orchestrate_for_rewrite "$hash" "$rewrite_prompt"); then
+      echo "Failed to get AI refinement. Exiting rewrite mode." >&2
+      exit 1
     fi
+    
+    if [[ -n "$refined_script" ]]; then
+      echo "AI refinement complete. Overwriting $script_to_rewrite with refined content."
+      echo "$refined_script" > "$script_to_rewrite"
+      echo "File $script_to_rewrite successfully rewritten."
+    else
+      echo "AI did not return any refined content. File not modified." >&2
+      exit 1
+    fi
+  elif [[ -n "$full_prompt_context" ]]; then
+    # Non-interactive mode with collected prompts
+    echo "Processing prompt from CLI arguments, file or URL..."
+    orchestrate "$hash" "$full_prompt_context"
+    hash=$(compute_rehash)
+    echo "REHASH: $hash"
+  else
+    # Interactive Mode (only if no prompts from other sources)
+    while true; do
+      echo -n "Prompt: "
+      local user_input_prompt
+      read -r user_input_prompt
+      [[ "$user_input_prompt" == quit ]] && break
 
-    # Event listener monitoring
-    content=$(echo "$content" | sed -E "s|\.addEventListener\((['\"])(.*?)\1,(.*)\)|.addEventListener(\1\2\1, /* AI: monitored */\3)|g")
+      local final_ai_prompt="--- User Input Start ---\n$user_input_prompt\n--- User Input End ---"
 
-    # Replace div.section with semantic <section>
-    content=$(echo "$content" | sed -E 's|<div class="section"|<section class="section"|g; s|</div><!-- .section -->|</section>|g')
-
-    # Accessibility roles
-    content=$(echo "$content" | sed -E 's|<nav|<nav role="navigation"|g; s|<header|<header role="banner"|g; s|<main|<main role="main"|g; s|<footer|<footer role="contentinfo"|g')
-
-    echo "$content" > "$file.processed"
-    log_success "Enhanced HTML saved as $file.processed"
+      orchestrate "$hash" "$final_ai_prompt"
+      hash=$(compute_rehash)
+      echo "REHASH: $hash"
+    done
+  fi
 }
 
-# -----------------------
-# OLLAMA GEMMA3:1B PROMPT
-# -----------------------
-ollama_run() {
-    local prompt="$1"
-    log_info "Running prompt on THE CUBE..."
-    pkill -f 'ollama serve' 2>/dev/null || true
-    ollama serve &
-    sleep 2
-    echo "$prompt" | ollama run cube:latest
-}
-
-# -----------------------
-# AI MODES
-# -----------------------
-mode_file() { for f in "$@"; do html_enhance "$f"; done; }
-mode_script() { log_info "Processing script content..."; }
-mode_batch() { local pattern="$1"; shift; for f in $pattern; do html_enhance "$f"; done; }
-mode_env() { log_info "Scanning environment..."; env | sort; df -h; ls -la "$HOME_ROOT"; ls -la /etc; }
-mode_pipeline() { for f in "$@"; do html_enhance "$f"; done; }
-
-# -----------------------
-# AGI MODES
-# -----------------------
-agi_watch() { local folder="$1"; local pattern="${2:-*}"; log_info "Watching $folder for changes matching $pattern"; command -v inotifywait >/dev/null 2>&1 || { log_error "Install inotify-tools"; return; }; inotifywait -m -r -e modify,create,move --format '%w%f' "$folder" | while read file; do case "$file" in $pattern) log_info "Detected change: $file"; html_enhance "$file"; esac; done; }
-agi_screenshot() { log_info "Screenshot disabled in Termux/Proot"; }
-
-# -----------------------
-# .bashrc ADAPTATION
-# -----------------------
-adapt_bashrc() {
-    local bashrc="$HOME_ROOT/.bashrc"
-    backup_file "$bashrc"
-    log_info "Rewriting .bashrc with AI/AGI/AIM configuration..."
-    cat > "$bashrc" <<'EOF'
-# Auto-generated .bashrc by ~/bin/ai
-export PATH="$HOME/bin:$PATH"
-alias ai='~/bin/ai'
-EOF
-    log_success ".bashrc rewritten successfully."
-    . "$bashrc"
-}
-
-# -----------------------
-# INSTALLER MODE
-# -----------------------
-mode_init() {
-    log_info "Installing AI/AGI/AIM tool..."
-    mkdir -p "$HOME_ROOT/bin"
-    cp -f "$0" "$HOME_ROOT/bin/ai"
-    chmod +x "$HOME_ROOT/bin/ai"
-    log_success "Script installed at $HOME_ROOT/bin/ai"
-    adapt_bashrc
-}
-
-# -----------------------
-# MAIN ARGUMENT PARSING
-# -----------------------
-if [ $# -eq 0 ]; then
-    log_info "Usage: $0 <mode> [files/patterns] [prompt]"
-    exit 0
-fi
-
-case "$1" in
-    init) shift; mode_init "$@" ;;
-    -) shift; mode_file "$@" ;;
-    +) shift; mode_script "$@" ;;
-    \*) shift; mode_batch "$@" ;;
-    .) shift; mode_env "$@" ;;
-    :) shift; IFS=':' read -r -a files <<< "$1"; mode_pipeline "${files[@]}" ;;
-    agi) shift; case "$1" in +|~) shift; agi_watch "$@" ;; -) shift; agi_screenshot "$@" ;; *) shift; agi_watch "$@" ;; esac ;;
-    *) PROMPT=$(get_prompt "$*"); ollama_run "$PROMPT" ;;
-esac
+main
