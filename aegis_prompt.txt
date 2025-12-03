@@ -1,0 +1,28 @@
+This is a sophisticated prompt designed to enforce procedural 3D modeling, complex animation logic, and single-file constraints for maximum detail and realism.
+
+```
+Generate a single, complete, and runnable HTML5 file named `aegis_deep_space_carrier.html`. This file must render a high-resolution, full-screen 3D simulation of the AEGIS heavy space carrier orbiting Earth using **Three.js (r128+)**, **GSAP (3.x)**, and custom **CSS3**.
+
+**Constraints & Libraries:**
+1.  **Single File Mandate:** All HTML, CSS (using a dedicated `<style>` block for canvas), and JavaScript (ES6, including Three.js/GSAP logic) must be contained within this single file.
+2.  **No External Assets:** **Crucially, the AEGIS ship model and the Earth model must be created entirely using procedural Three.js geometries** (`THREE.Mesh`, `BufferGeometry`, etc.). Do not use GLTF, OBJ, or external image textures; use procedural materials, colors, and emissive properties.
+3.  **CDN Usage:** Load Three.js (r128+), OrbitControls, and GSAP (3.x) from CDNs using `<script>` tags.
+
+**3D Scene Construction:**
+1.  **Earth Model:** Create a large `THREE.Sphere` (radius ~10 units) with a deep blue/green `MeshStandardMaterial`. Apply a subtle `emissive` component to simulate the glow of city lights on the dark side.
+2.  **AEGIS Carrier Model:** Construct the AEGIS ship (scale ~1 unit) using simple procedural geometries (e.g., elongated boxes, cones) to represent a massive, heavy carrier. It should have a central body and two main, slightly angled wing sections.
+3.  **Starfield:** Implement a realistic starfield using a `THREE.Points` system with hundreds of randomized, small white dots, or by using a procedural sphere geometry as a skybox with randomized textures (no external image load).
+4.  **Lighting:** Use realistic `THREE.DirectionalLight` (simulating the Sun) and soft `THREE.AmbientLight`.
+
+**Dynamics & Advanced Engine Animation (GSAP Required):**
+1.  **Orbit:** Animate the AEGIS carrier in a stable, smooth, elliptical (or circular) orbit around the Earth model. The orbital period should be slow and majestic.
+2.  **Fixed Perspective:** Set the camera to a fixed point in space providing a **60° angled, slightly-from-above** view of the carrier as it glides in its orbit. The camera should constantly look at the ship's current position to maintain focus.
+3.  **Plasma Engine Visualization:** Implement the complex, water-carbonized plasma drive using **three distinct engine poles** positioned at the rear of the AEGIS ship (use simple cylinders or cones).
+    * Use GSAP to drive the emission intensity (`material.emissiveIntensity`) and color of these three poles to simulate the movement logic: **Pulsing two poles while the third pole flickers accordingly.** Use a deep cyan/blue color for the plasma effect.
+    * *GSAP Logic:* Define coordinated, repeating `Timeline` animations where two poles pulse smoothly (scale or emissive intensity 0.8 -> 1.5), and the third pole rapidly flickers (emissive intensity 0.2 <-> 1.0) out of sync with the other two.
+
+**Interactivity & Polish:**
+1.  **Orbit Controls:** Include `OrbitControls` but ensure they are initially disabled or heavily restricted to keep the intended 60° static view, allowing only minor zoom/pan for examination.
+2.  **Performance:** Optimize the Three.js scene for smooth frame rates.
+3.  **Visual Aesthetic:** Dark, high-contrast space environment, emphasizing the cyan glow of the AEGIS engine against the blue Earth and black void.
+```

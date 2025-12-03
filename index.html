@@ -3,285 +3,594 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>UFO — Unlimited-Force-Observer Dashboard</title>
+<title>AEGIS — Navigation & Flight Systems</title>
+<!-- Load Three.js and GSAP -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+
 <style>
-:root{--bg:#000;--fg:#cfe;--accent:#ff8a00}
-html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:Inter,Arial,Helvetica,sans-serif}
+:root{--bg:#020406;--fg:#a0c0ff;--accent:#00ff88;--warn:#ff4400;--panel:#0b1620dd}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:'Segoe UI', Inter, Arial, sans-serif; overflow: hidden;}
 .app{display:flex;height:100vh;gap:12px;padding:12px;box-sizing:border-box}
-aside{width:360px;background:#07101855;border-radius:8px;padding:12px;display:flex;flex-direction:column}
-main{flex:1;display:flex;flex-direction:column}
-canvas{width:100%;height:100%;background:#000;border-radius:8px;display:block}
-h1{margin:0 0 8px 0;font-size:18px}
+
+/* HUD Styling */
+aside{width:380px;background:var(--panel);border: 1px solid #1a4a3a; border-radius:4px;padding:16px;display:flex;flex-direction:column; backdrop-filter: blur(10px); z-index: 10;}
+main{flex:1;display:flex;flex-direction:column; position: relative;}
+canvas{width:100%;height:100%;background:#000;border-radius:4px;display:block; border: 1px solid #1a4a3a;}
+
+h1{margin:0 0 4px 0;font-size:20px; color: var(--accent); text-transform: uppercase; letter-spacing: 2px; text-shadow: 0 0 10px var(--accent);}
+h2{margin:0 0 12px 0;font-size:10px; color: #597; text-transform: uppercase; letter-spacing: 1px;}
+
 .controls{display:flex;gap:8px;flex-wrap:wrap}
-.card{background:#08131a88;padding:8px;border-radius:6px;margin-bottom:8px}
-label{display:block;font-size:12px;color:#9fb}
-select,input,button,textarea{width:100%;padding:8px;border-radius:6px;border:1px solid #234;color:#dff;background:transparent}
+.card{background:#0f2a2088;padding:10px;border-radius:4px;margin-bottom:12px; border-left: 2px solid var(--accent); position:relative;}
+.card::after{content:''; position:absolute; top:0; right:0; width:10px; height:10px; border-top:1px solid var(--accent); border-right:1px solid var(--accent);}
+
+label{display:block;font-size:10px;color:#6a8; text-transform: uppercase; margin-bottom: 4px; font-weight: bold;}
+select,input,button,textarea{width:100%;padding:8px;border-radius:2px;border:1px solid #243;color:#dff;background:#0008; font-family: monospace; box-sizing: border-box; outline: none;}
+input:focus, textarea:focus {border-color: var(--accent);}
+
+button{cursor: pointer; background: linear-gradient(90deg, #00ff8811, transparent); transition: 0.2s; border: 1px solid #00ff8844;}
+button:hover{background: #00ff8833; color: #fff; border-color: var(--accent);}
+
 .agent-list{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.agent{padding:6px;border-radius:6px;background:#021;display:flex;flex-direction:column}
-.log{height:140px;overflow:auto;background:#0002;padding:6px;border-radius:6px;font-family:monospace;font-size:12px}
-.ufo-label{position:absolute;padding:4px 8px;border-radius:6px;background:rgba(10,10,12,0.85);color:#cff;font-family:monospace;font-size:12px;pointer-events:none;transform:translate(-50%,-50%);}
+.agent{padding:6px;border-radius:2px;background:#0005;display:flex;flex-direction:column; border: 1px solid #1a4a3a;}
+.log{height:140px;overflow:auto;background:#0005;padding:8px;border-radius:2px;font-family:'Courier New', monospace;font-size:11px; color: #8ba; border: 1px solid #ffffff11;}
+.log::-webkit-scrollbar {width: 4px;}
+.log::-webkit-scrollbar-thumb {background: var(--accent);}
+
+/* Overlay UI */
+/* IMPORTANT: The ufo-label position must be absolute relative to the body for correct 2D overlay */
+.ufo-label{position:absolute;padding:2px 6px;border-radius:2px;background:rgba(5,20,10,0.8);border: 1px solid var(--accent); color:var(--accent);font-family:monospace;font-size:9px;pointer-events:none;transform:translate(-50%,-50%); transition: opacity 0.3s; white-space: nowrap; z-index: 100;}
+.ufo-line{position:absolute; height:1px; background:var(--accent); transform-origin: 0 50%; opacity:0.5; pointer-events:none;}
+
+#stats{white-space: pre-wrap; line-height: 1.4; color: #00ff88;}
+.blink{animation: blink 2s infinite;}
+@keyframes blink {0%{opacity:1} 50%{opacity:0.5} 100%{opacity:1}}
 </style>
 </head>
 <body>
 <div class="app">
   <aside>
-    <h1>UFO Dashboard</h1>
+    <h1>AEGIS Navigation</h1>
+    <h2>System: Vector Flight Path</h2>
+    
     <div class="card">
-      <label>Genesis prompt</label>
-      <textarea id="genesisPrompt" rows="3">Observe force vectors, create genesis-hash and spawn 8 agents across 2π</textarea>
-      <button id="genesisBtn">Create Genesis & Spawn Agents</button>
-      <div style="margin-top:8px;"><label>Genesis hash</label><input id="genesisHash" readonly /></div>
+      <label>Navigation Control</label>
+      <div style="font-family:monospace; font-size:11px; margin-bottom:8px; color:#00ff88;" class="blink">
+        >> NAVIGATION MODE: ACTIVE<br>
+        >> CHRONOLOGIC LOCK: STABLE
+      </div>
+      <textarea id="genesisPrompt" rows="2">Calculate sector hash for warp insertion. Align vector pointer.</textarea>
+      <button id="genesisBtn">PLOT TRAJECTORY</button>
+      <div style="margin-top:8px;"><label>Sector Hash</label><input id="genesisHash" readonly value="CALCULATING..." style="color:#597"/></div>
     </div>
 
     <div class="card">
-      <label>Model pool (local Ollama names)</label>
+      <label>AI Core Link (Ollama)</label>
       <div class="controls">
         <select id="modelSelect">
-          <option value="cube">cube</option>
-          <option value="core">core</option>
-          <option value="loop">loop</option>
-          <option value="wave">wave</option>
-          <option value="line">line</option>
-          <option value="coin">coin</option>
-          <option value="code">code</option>
-          <option value="work">work</option>
+          <option value="llama3">llama3</option>
+          <option value="mistral">mistral</option>
+          <option value="gemma">gemma</option>
+          <option value="phi3">phi3</option>
         </select>
-        <button id="probeModels">Probe Models</button>
+        <button id="probeModels">PING CORE</button>
       </div>
-      <div style="margin-top:8px"><label>Ollama API URL</label><input id="ollamaUrl" placeholder="http://localhost:11434" /></div>
+      <div style="margin-top:8px"><label>Network Node</label><input id="ollamaUrl" value="http://localhost:11434" /></div>
     </div>
 
     <div class="card">
-      <label>Agents</label>
+      <label>Crew Status (2π/8)</label>
       <div class="agent-list" id="agents"></div>
-      <div style="margin-top:8px"><button id="runCycle">Run One Cycle (parallel)</button></div>
+      <div style="margin-top:8px"><button id="runCycle">POLL NAVIGATORS</button></div>
     </div>
 
     <div class="card">
-      <label>Memory & Rehash</label>
-      <div style="display:flex;gap:6px"><button id="saveMemory">Save Memory</button><button id="reloopMemory">Re-loop Memory</button></div>
+      <label>Flight Log</label>
       <div class="log" id="log"></div>
     </div>
   </aside>
 
   <main>
-    <canvas id="gl"></canvas>
-    <div style="display:flex;gap:8px;margin-top:8px;">
-      <div class="card" style="flex:1">
-        <label>Selected agent output</label>
-        <div id="agentOutput" class="log"></div>
+    <!-- 3D Viewport -->
+    <div id="scene-container" style="flex:1; position:relative; overflow:hidden;"></div>
+    
+    <!-- Bottom Panel -->
+    <div style="display:flex;gap:8px;margin-top:8px; height: 160px; z-index:10;">
+      <div class="card" style="flex:1; overflow: hidden; display:flex; flex-direction:column;">
+        <label>Comms Array</label>
+        <div id="agentOutput" class="log" style="flex:1; height:auto; color:#ccc;">Listening on nav-comms...</div>
       </div>
-      <div class="card" style="width:320px">
-        <label>Stats</label>
-        <div id="stats" style="font-family:monospace;font-size:13px"></div>
+      <div class="card" style="width:300px; overflow: hidden; display:flex; flex-direction:column; background: #001a11ee;">
+        <label>Navigational Telemetry</label>
+        <div id="stats" class="log" style="flex:1; height:auto;">Acquiring signal...</div>
       </div>
     </div>
   </main>
 </div>
 
 <script type="module">
-/* === UFO Dashboard — ES module (full, fixed) === */
-const canvas = document.getElementById('gl');
-const gl = canvas.getContext('webgl');
-if(!gl){ alert('WebGL not supported'); }
-function resize(){ canvas.width = canvas.clientWidth * devicePixelRatio; canvas.height = canvas.clientHeight * devicePixelRatio; gl.viewport(0,0,canvas.width,canvas.height); }
-window.addEventListener('resize', resize); resize();
+// ======================= THREE.JS AEGIS SETUP =======================
 
-// geometry
-function makeSphereVerts(radius=1, lat=24, lon=48){
-  const verts=[];
-  for(let i=0;i<=lat;i++){
-    const theta = i/lat*Math.PI;
-    for(let j=0;j<=lon;j++){
-      const phi = j/lon*2*Math.PI;
-      const x = radius*Math.sin(theta)*Math.cos(phi);
-      const y = radius*Math.cos(theta);
-      const z = radius*Math.sin(theta)*Math.sin(phi);
-      verts.push(x,y,z);
+const container = document.getElementById('scene-container');
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x020406, 0.005); 
+
+// Camera Setup
+const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 3000);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(container.clientWidth, container.clientHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+container.appendChild(renderer.domElement);
+
+// --- Lighting (Increased brightness from previous step) ---
+const ambientLight = new THREE.AmbientLight(0x404040, 1.0); 
+scene.add(ambientLight);
+
+const sunLight = new THREE.DirectionalLight(0xffffff, 2.5);
+sunLight.position.set(100, 50, 80);
+scene.add(sunLight);
+
+const navLight = new THREE.PointLight(0x00ff88, 3, 100);
+navLight.position.set(20, 0, 0);
+scene.add(navLight);
+
+// --- 1. The Earth (Distant) ---
+const earthGeo = new THREE.SphereGeometry(80, 64, 64);
+const earthMat = new THREE.MeshStandardMaterial({ 
+    color: 0x051020, 
+    roughness: 0.6, 
+    emissive: 0x000510,
+    emissiveIntensity: 0.3
+});
+const earth = new THREE.Mesh(earthGeo, earthMat);
+earth.position.set(0, -150, 0); 
+scene.add(earth);
+
+const atmoGeo = new THREE.SphereGeometry(82, 32, 32);
+const atmoMat = new THREE.MeshBasicMaterial({ color: 0x0044ff, transparent: true, opacity: 0.05, side: THREE.BackSide });
+const atmo = new THREE.Mesh(atmoGeo, atmoMat);
+earth.add(atmo);
+
+
+// --- 2. The AEGIS Carrier (Procedural) ---
+const aegisGroup = new THREE.Group();
+aegisGroup.name = "AEGIS_SHIP";
+scene.add(aegisGroup);
+
+// Materials
+const hullMat = new THREE.MeshStandardMaterial({ color: 0x667788, roughness: 0.4, metalness: 0.8 });
+const darkMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8, metalness: 0.2 });
+const windowMat = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.0, metalness: 1.0, emissive: 0x003322 });
+const engineMat = new THREE.MeshBasicMaterial({ color: 0x00ffaa });
+
+// --- Structure: Main Hull (Sleek Wedge) ---
+const mainHullGeo = new THREE.BufferGeometry();
+const vertices = new Float32Array([
+    // Front Nose (Pointed)
+    10.0, 0.0, 0.0, 
+    // Mid-Front (Wider)
+    4.0, 2.0, 4.0,
+    4.0, 2.0, -4.0,
+    4.0, -2.0, -4.0,
+    4.0, -2.0, 4.0,
+    // Rear (Boxy)
+    -8.0, 2.0, 4.0,
+    -8.0, 2.0, -4.0,
+    -8.0, -2.0, -4.0,
+    -8.0, -2.0, 4.0,
+]);
+const indices = new Uint16Array([
+    // Front Faces (Nose)
+    0, 2, 1, 0, 3, 2, 0, 4, 3, 0, 1, 4,
+    // Top, Bottom, Sides (Mid to Rear)
+    1, 2, 6, 1, 6, 5, // Top
+    3, 4, 8, 3, 8, 7, // Bottom
+    4, 1, 5, 4, 5, 8, // Right Side
+    2, 3, 7, 2, 7, 6, // Left Side
+    // Rear End
+    5, 6, 7, 5, 7, 8
+]);
+
+mainHullGeo.setIndex(new THREE.BufferAttribute(indices, 1));
+mainHullGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+mainHullGeo.computeVertexNormals();
+const mainHull = new THREE.Mesh(mainHullGeo, hullMat);
+aegisGroup.add(mainHull);
+
+// --- 3. Red Geometric Scheme Layer (Structural Integrity) ---
+const redMeshMat = new THREE.MeshBasicMaterial({ 
+    color: 0xff0000, 
+    wireframe: true, 
+    transparent: true, 
+    opacity: 0.6,
+    depthTest: false 
+});
+
+const redMeshLayer = new THREE.Mesh(mainHullGeo, redMeshMat);
+redMeshLayer.scale.set(1.02, 1.02, 1.02); 
+aegisGroup.add(redMeshLayer);
+
+// --- 4. Blue Ablative Layer (Gravitic Field / Shield) ---
+const blueSphereGeo = new THREE.SphereGeometry(14, 16, 16); // Radius 14, encompassing the hull
+const blueMeshMat = new THREE.MeshBasicMaterial({ 
+    color: 0x00aaff, // Blue color
+    wireframe: true, 
+    transparent: true, 
+    opacity: 0.3, // Subtle effect
+    depthTest: false 
+});
+
+const blueMeshLayer = new THREE.Mesh(blueSphereGeo, blueMeshMat);
+aegisGroup.add(blueMeshLayer);
+
+// --- Cockpit ---
+const cockpitGeo = new THREE.ConeGeometry(0.8, 4, 8);
+cockpitGeo.rotateX(Math.PI / 2);
+cockpitGeo.translate(6, 0.2, 0);
+const cockpit = new THREE.Mesh(cockpitGeo, windowMat);
+aegisGroup.add(cockpit);
+
+// --- Swept-Back Pylons/Wings (Existing code for context) ---
+const pylonGeo = new THREE.BoxGeometry(10, 0.5, 2);
+const lPylon = new THREE.Mesh(pylonGeo, darkMat);
+lPylon.position.set(-2, 1, 6);
+lPylon.rotation.y = -0.3;
+lPylon.rotation.z = -0.1;
+aegisGroup.add(lPylon);
+
+const rPylon = new THREE.Mesh(pylonGeo, darkMat);
+rPylon.position.set(-2, 1, -6);
+rPylon.rotation.y = -0.3;
+rPylon.rotation.z = 0.1;
+aegisGroup.add(rPylon);
+
+// --- Engines (Integrated) (Existing code for context) ---
+const engineGeo = new THREE.CylinderGeometry(1.2, 1.2, 4, 16);
+engineGeo.rotateZ(Math.PI / 2);
+
+const lEngineHousing = new THREE.Mesh(engineGeo, hullMat);
+lEngineHousing.position.set(-6, 0.7, 10.5);
+lEngineHousing.rotation.y = -0.3;
+const lCoreGeo = new THREE.ConeGeometry(0.8, 5, 16, 1, true);
+lCoreGeo.rotateZ(-Math.PI / 2);
+lCoreGeo.translate(-2, 0, 0);
+const lCore = new THREE.Mesh(lCoreGeo, engineMat);
+lEngineHousing.add(lCore);
+aegisGroup.add(lEngineHousing);
+
+const rEngineHousing = new THREE.Mesh(engineGeo, hullMat);
+rEngineHousing.position.set(-6, 0.7, -10.5);
+rEngineHousing.rotation.y = 0.3;
+const rCoreGeo = new THREE.ConeGeometry(0.8, 5, 16, 1, true);
+rCoreGeo.rotateZ(-Math.PI / 2);
+rCoreGeo.translate(-2, 0, 0);
+const rCore = new THREE.Mesh(rCoreGeo, engineMat);
+rEngineHousing.add(rCore);
+aegisGroup.add(rEngineHousing);
+
+
+// --- NAVIGATION VISUALS ---
+
+// 1. Trajectory Line
+const trajPts = [];
+for(let i=0; i<100; i++) {
+    trajPts.push(new THREE.Vector3(10 + i * 2, 0, 0)); // Points forward from nose
+}
+const trajGeo = new THREE.BufferGeometry().setFromPoints(trajPts);
+const trajMat = new THREE.LineDashedMaterial({
+    color: 0x00ff88,
+    linewidth: 1,
+    scale: 1,
+    dashSize: 3,
+    gapSize: 2,
+    transparent: true,
+    opacity: 0.5
+});
+const trajectoryLine = new THREE.Line(trajGeo, trajMat);
+trajectoryLine.computeLineDistances();
+aegisGroup.add(trajectoryLine); // Attach to ship
+
+// 2. Waypoint Marker (Distant Target)
+const waypointGroup = new THREE.Group();
+waypointGroup.position.set(200, 20, 0); // Ahead of ship in global coordinates
+scene.add(waypointGroup);
+
+const wpGeo = new THREE.BoxGeometry(4, 4, 4);
+const wpMat = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
+const waypoint = new THREE.Mesh(wpGeo, wpMat);
+waypointGroup.add(waypoint);
+
+// Waypoint Inner
+const wpInnerGeo = new THREE.OctahedronGeometry(1.5);
+const wpInnerMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
+const wpInner = new THREE.Mesh(wpInnerGeo, wpInnerMat);
+waypointGroup.add(wpInner);
+
+// Connector Line to Waypoint
+const connectorMat = new THREE.LineBasicMaterial({ color: 0x004433, transparent: true, opacity: 0.3 });
+// Adjust connector to account for rebuilt ship's scale
+const connectorGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(-200, -20, 0)]);
+const connector = new THREE.Line(connectorGeo, connectorMat);
+waypointGroup.add(connector);
+
+
+// --- 3. Starfield (Streaking effect for movement) ---
+const starGeo = new THREE.BufferGeometry();
+const starCount = 3000;
+const starPos = new Float32Array(starCount * 3);
+for(let i=0; i<starCount*3; i++) {
+    starPos[i] = (Math.random() - 0.5) * 1000;
+}
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+const starMat = new THREE.PointsMaterial({color: 0xaaccff, size: 0.5, transparent: true, opacity: 0.8});
+const stars = new THREE.Points(starGeo, starMat);
+scene.add(stars);
+
+
+// ======================= LOGIC BRIDGE =======================
+
+const agentNames = ['COORDINATOR','NAVIGATOR','DOCTOR','PREDICTOR','ADVISER','CONSTELLATOR','MARKETER','COMMUNICATOR'];
+let agentsData = [];
+let agentMeshes = [];
+
+// Helper: Text Label Overlay
+function createLabel(text) {
+    const div = document.createElement('div');
+    div.className = 'ufo-label';
+    div.textContent = text;
+    document.body.appendChild(div);
+    return div;
+}
+
+function spawnAgents3D(hash) {
+    // Clear existing agents from the scene graph
+    agentMeshes.forEach(a => { 
+        // Agents are children of aegisGroup
+        aegisGroup.remove(a.mesh); 
+        if(a.label) a.label.remove(); 
+    });
+    agentMeshes = [];
+    agentsData = [];
+    const count = 8;
+    const radius = 18;
+
+    for(let i=0; i<count; i++) {
+        const name = agentNames[i];
+        const angle = (i / count) * Math.PI * 2;
+        const geo = new THREE.OctahedronGeometry(0.4);
+        const mat = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
+        const mesh = new THREE.Mesh(geo, mat);
+        
+        // Add mesh to aegisGroup so it moves with the ship
+        mesh.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+        aegisGroup.add(mesh); 
+        
+        const label = createLabel(name);
+        const agentObj = { id: i, name: name, mesh: mesh, label: label, angle: angle, radius: radius, speed: 0.003 + (Math.random() * 0.002) };
+        agentMeshes.push(agentObj);
+        agentsData.push(agentObj);
     }
-  }
-  return new Float32Array(verts);
-}
-function makeCirclePath(radius, segments=128, y=0){ const a=[]; for(let i=0;i<segments;i++){ const t = i/segments*2*Math.PI; a.push(radius*Math.cos(t), y, radius*Math.sin(t)); } return new Float32Array(a); }
-const sphereVerts = makeSphereVerts(0.92, 36, 72);
-
-// shaders
-const vs_point = `attribute vec3 pos; uniform mat4 mvp; uniform float pointSize; void main(){ gl_Position = mvp * vec4(pos,1.0); gl_PointSize = pointSize; }`;
-const fs_point = `precision mediump float; uniform vec3 color; void main(){ float d = length(gl_PointCoord - vec2(0.5)); if(d>0.5) discard; gl_FragColor = vec4(color,1.0); }`;
-const vs_line = `attribute vec3 pos; uniform mat4 mvp; void main(){ gl_Position = mvp * vec4(pos,1.0); }`;
-const fs_line = `precision mediump float; uniform vec3 color; void main(){ gl_FragColor = vec4(color,1.0); }`;
-function compile(type, src){ const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s); return s; }
-function createProgram(vs_src, fs_src){ const p = gl.createProgram(); gl.attachShader(p, compile(gl.VERTEX_SHADER, vs_src)); gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs_src)); gl.linkProgram(p); if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw gl.getProgramInfoLog(p); return p; }
-const progPoint = createProgram(vs_point, fs_point);
-const progLine = createProgram(vs_line, fs_line);
-const posLocPoint = gl.getAttribLocation(progPoint,'pos'); const mvpLocPoint = gl.getUniformLocation(progPoint,'mvp'); const colorLocPoint = gl.getUniformLocation(progPoint,'color'); const pointSizeLoc = gl.getUniformLocation(progPoint,'pointSize');
-const posLocLine = gl.getAttribLocation(progLine,'pos'); const mvpLocLine = gl.getUniformLocation(progLine,'mvp'); const colorLocLine = gl.getUniformLocation(progLine,'color');
-
-// buffers
-const sphereVBO = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, sphereVBO); gl.bufferData(gl.ARRAY_BUFFER, sphereVerts, gl.STATIC_DRAW);
-
-// math
-function perspective(fovy, aspect, near, far){ const f = 1/Math.tan(fovy/2); const nf = 1/(near - far); const out=new Float32Array(16);
- out[0]=f/aspect; out[1]=0; out[2]=0; out[3]=0;
- out[4]=0; out[5]=f; out[6]=0; out[7]=0;
- out[8]=0; out[9]=0; out[10]=(far+near)*nf; out[11]=-1;
- out[12]=0; out[13]=0; out[14]=2*far*near*nf; out[15]=0; return out; }
-function identity(){ const o=new Float32Array(16); o[0]=1;o[5]=1;o[10]=1;o[15]=1; return o; }
-function mul(a,b){ const o=new Float32Array(16); for(let i=0;i<4;i++) for(let j=0;j<4;j++){ let s=0; for(let k=0;k<4;k++) s+=a[k*4+j]*b[i*4+k]; o[i*4+j]=s; } return o; }
-function translate(tx,ty,tz){ const m=identity(); m[12]=tx; m[13]=ty; m[14]=tz; return m; }
-function rotateY(a){ const c=Math.cos(a), s=Math.sin(a); const m=identity(); m[0]=c; m[2]=s; m[8]=-s; m[10]=c; return m; }
-
-// project world pos to screen for labels
-function projectPos(pos, mvp, w, h){ const x = pos[0], y=pos[1], z=pos[2]; const vx = mvp[0]*x + mvp[4]*y + mvp[8]*z + mvp[12]; const vy = mvp[1]*x + mvp[5]*y + mvp[9]*z + mvp[13]; const vz = mvp[3]*x + mvp[7]*y + mvp[11]*z + mvp[15]; if(vz===0) return [0,0,-1]; const nx = vx / vz; const ny = vy / vz; return [(nx*0.5+0.5)*w, (1-(ny*0.5+0.5))*h, vz]; }
-
-// agents
-const agentNames = ['predictor','adviser','coordinator','constellator','marketer','navigator','communicator','doctor'];
-const models = ['cube','core','loop','wave','line','coin','code','work'];
-let agents = [];
-function spawnAgents(genHash){ // remove old labels
-  document.querySelectorAll('.ufo-label').forEach(n=>n.remove());
-  agents = [];
-  const n = 8;
-  for(let i=0;i<n;i++){
-    const phi = (i/n)*Math.PI*2; const r = 1.35; const ang = phi; const model = models[i%models.length]; const name = agentNames[i%agentNames.length];
-    const hue = i/n; const col = hsvToRgb(hue,0.9,0.95);
-    const pos = [Math.cos(ang)*r, 0.0, Math.sin(ang)*r];
-    const label = document.createElement('div'); label.className='ufo-label'; label.innerText = `${name} • ${model}`;
-    document.body.appendChild(label);
-    agents.push({id:i,name,model,orbitRadius:r,orbitPhase:ang,color:col,label,position:pos,trail:[]});
-  }
-  renderAgentsList();
-}
-function hsvToRgb(h,s,v){ const i=Math.floor(h*6); const f=h*6-i; const p=v*(1-s); const q=v*(1-f*s); const t=v*(1-(1-f)*s); let r,g,b; switch(i%6){case 0:r=v;g=t;b=p;break;case 1:r=q;g=v;b=p;break;case 2:r=p;g=v;b=t;break;case 3:r=p;g=q;b=v;break;case 4:r=t;g=p;b=v;break;case 5:r=v;g=p;b=q;break;} return [r,g,b]; }
-function renderAgentsList(){ const wrap = document.getElementById('agents'); wrap.innerHTML=''; agents.forEach(a=>{
-  const el = document.createElement('div'); el.className='agent'; el.innerHTML = `<strong>${a.name}</strong><small>${a.model}</small><div style="font-size:12px;margin-top:6px">orbit r=${a.orbitRadius.toFixed(2)}</div>`; wrap.appendChild(el);
- }); }
-
-// line buffers
-function createLineBuffer(arr){ const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, arr, gl.DYNAMIC_DRAW); return b;
+    renderAgentsList();
 }
 
-// π-rails
-const piRails = []; (function(){ const rails = 7; for(let r=0;r<rails;r++){
-  const points=[];
-  const offset = (r - (rails-1)/2) * 0.18;
-  for(let t=-3;t<=3;t+=0.2){
-    const x = -2 + t*0.9;
-    const y = -1.5 + offset + Math.sin(t*0.6)*0.15;
-    const z = -2 + t*0.4;
-    points.push(x,y,z);
-  }
-  piRails.push(new Float32Array(points));
-})();
-const piBuffers = piRails.map(arr=>createLineBuffer(arr));
+function renderAgentsList(){ 
+  const wrap = document.getElementById('agents'); wrap.innerHTML='';
+  agentsData.forEach(a=>{
+    const el = document.createElement('div'); el.className='agent';
+    el.innerHTML = `<strong>${a.name}</strong><small style="color:#00ff88">ON STATION</small>`;
+    wrap.appendChild(el);
+  }); 
+}
 
-// draw
-let angle = 0; const orbitSpeed = 0.002;
-function draw(){
-  resize();
-  gl.clearColor(0,0,0,1);
-  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-  gl.enable(gl.DEPTH_TEST);
-  const aspect = canvas.width / canvas.height;
-  const proj = perspective(Math.PI/4, aspect, 0.1, 100);
-  const view = translate(0,0,-6.0);
-  const model = mul(rotateY(angle*0.4), identity());
-  const mvp = mul(proj, mul(view, model));
-  // sphere
-  gl.useProgram(progPoint);
-  gl.bindBuffer(gl.ARRAY_BUFFER, sphereVBO); gl.enableVertexAttribArray(posLocPoint); gl.vertexAttribPointer(posLocPoint,3,gl.FLOAT,false,0,0);
-  gl.uniformMatrix4fv(mvpLocPoint,false,mvp);
-  gl.uniform3f(colorLocPoint,0.12,0.45,0.82); gl.uniform1f(pointSizeLoc, 1.8 * devicePixelRatio);
-  gl.drawArrays(gl.POINTS, 0, sphereVerts.length/3);
-  // π-rails
-  gl.useProgram(progLine); gl.uniformMatrix4fv(mvpLocLine,false,mvp); gl.uniform3f(colorLocLine, 0.25, 0.1, 0.7);
-  piBuffers.forEach((buf,idx)=>{
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.enableVertexAttribArray(posLocLine);
-    gl.vertexAttribPointer(posLocLine,3,gl.FLOAT,false,0,0);
-    gl.drawArrays(gl.LINE_STRIP, 0, piRails[idx].length/3);
-  });
-  // agents
-  gl.useProgram(progPoint); gl.uniformMatrix4fv(mvpLocPoint,false,mvp);
-  agents.forEach((a,i)=>{
-    a.orbitPhase += orbitSpeed * (1 + i*0.02);
-    const ox = Math.cos(a.orbitPhase) * a.orbitRadius;
-    const oy = Math.sin(a.orbitPhase*0.4) * 0.18;
-    const oz = Math.sin(a.orbitPhase) * a.orbitRadius;
-    a.position = [ox, oy, oz];
-    a.trail.unshift([ox*0.9, oy*0.9, oz*0.9]); if(a.trail.length>128) a.trail.pop();
-    const arr = new Float32Array(a.position);
-    const tmp = createLineBuffer(arr); gl.bindBuffer(gl.ARRAY_BUFFER,tmp); gl.enableVertexAttribArray(posLocPoint); gl.vertexAttribPointer(posLocPoint,3,gl.FLOAT,false,0,0);
-    gl.uniform3f(colorLocPoint, a.color[0], a.color[1], a.color[2]); gl.uniform1f(pointSizeLoc, 12 * devicePixelRatio);
-    gl.drawArrays(gl.POINTS, 0, 1);
-    gl.deleteBuffer(tmp);
-  });
-  // trails
-  gl.useProgram(progLine); gl.uniformMatrix4fv(mvpLocLine,false,mvp);
-  agents.forEach((a,i)=>{
-    if(a.trail.length<2) return;
-    const flat = new Float32Array(a.trail.length*3);
-    for(let k=0;k<a.trail.length;k++){
-      flat[k*3]=a.trail[k][0]; flat[k*3+1]=a.trail[k][1]; flat[k*3+2]=a.trail[k][2];
+// --- Animation Loop ---
+let time = 0;
+
+function animate() {
+    requestAnimationFrame(animate);
+    time += 0.01;
+
+    // 1. Ship Motion (Floating and slow yaw for visibility)
+    aegisGroup.position.y = Math.sin(time * 0.5) * 1;
+    aegisGroup.rotation.z = Math.sin(time * 0.2) * 0.05;
+    aegisGroup.rotation.y = Math.sin(time * 0.1) * 0.1; // Gentle yaw
+    
+    // Animate the red mesh layer: Pulsation kept, locked to ship direction.
+    redMeshLayer.scale.setScalar(1.02 + Math.sin(time * 2) * 0.01);
+
+    // Animate the blue sphere layer (Shield): Independent rotation around ship is intentional.
+    blueMeshLayer.rotation.y += 0.005;
+    blueMeshLayer.scale.setScalar(1 + Math.sin(time * 1.5) * 0.015);
+
+    // 2. Trajectory Animation (Marching ants effect)
+    trajMat.dashSize = 3; 
+    trajMat.gapSize = 2;
+    trajMat.opacity = 0.5 + Math.sin(time * 10) * 0.3;
+
+    // 3. Waypoint Animation
+    waypoint.rotation.x += 0.01;
+    waypoint.rotation.y -= 0.01;
+    wpInner.rotation.x -= 0.02;
+    wpInner.scale.setScalar(1 + Math.sin(time * 4) * 0.2);
+    
+    // 4. Starfield Parallax (Simulate forward velocity)
+    const positions = stars.geometry.attributes.position.array;
+    for(let i = 0; i < starCount; i++) {
+        // Move stars backward along X axis (Ship faces +X)
+        positions[i * 3] -= 0.5; 
+        if(positions[i * 3] < -500) positions[i * 3] = 500; // Loop
     }
-    const b = createLineBuffer(flat); gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.enableVertexAttribArray(posLocLine); gl.vertexAttribPointer(posLocLine,3,gl.FLOAT,false,0,0);
-    gl.uniform3f(colorLocLine, a.color[0]*0.9, a.color[1]*0.9, a.color[2]*0.9);
-    gl.drawArrays(gl.LINE_STRIP, 0, a.trail.length);
-    gl.deleteBuffer(b);
-  });
-  // labels
-  agents.forEach(a=>{
-    const scr = projectPos(a.position, mvp, canvas.width, canvas.height);
-    const label = a.label; if(!label) return;
-    if(scr[2] < 0){ label.style.display='none'; } else { label.style.display='block'; label.style.left = (scr[0]/devicePixelRatio)+'px'; label.style.top = (scr[1]/devicePixelRatio)+'px'; }
-  });
-  angle += 0.003; requestAnimationFrame(draw);
+    stars.geometry.attributes.position.needsUpdate = true;
+
+    // 5. Update Agents
+    agentMeshes.forEach(a => {
+        a.angle += a.speed;
+        // Position is relative to aegisGroup
+        a.mesh.position.x = Math.cos(a.angle) * a.radius;
+        a.mesh.position.z = Math.sin(a.angle) * a.radius;
+        // Navigation bob
+        a.mesh.position.y = Math.sin(time + a.angle * 4) * 0.5; // Bob relative to ship's center
+        a.mesh.rotation.y += 0.02;
+        updateLabelPosition(a.mesh, a.label);
+    });
+
+    // 6. Camera (Adjusted for better view of rebuilt ship)
+    const targetPos = aegisGroup.position.clone();
+    camera.position.set(35, 20, 45); // Slightly wider and higher angle
+    camera.lookAt(targetPos);
+
+    renderer.render(scene, camera);
+    updateStats();
 }
 
-// UI helpers
-function log(s){ const l = document.getElementById('log'); l.innerText = '['+new Date().toISOString()+'] '+s+'\n'+l.innerText; }
+function updateLabelPosition(mesh, label) {
+    if(!label) return;
+    const tempV = new THREE.Vector3();
+    
+    // 1. Get Global Position
+    mesh.updateWorldMatrix(true, false);
+    mesh.getWorldPosition(tempV);
+    
+    // 2. Project to Clip Space
+    tempV.project(camera);
+    
+    // Check Z-depth (behind camera)
+    if(Math.abs(tempV.z) > 1) { 
+        label.style.opacity = 0; 
+        return;
+    }
+    
+    // Get the bounding box of the container to calculate offset
+    const rect = container.getBoundingClientRect();
+
+    // 3. Map Clip Space (-1 to 1) to Screen Space (0 to width/height of container)
+    const x = (tempV.x * .5 + .5) * rect.width;
+    const y = (tempV.y * -.5 + .5) * rect.height; // Note: Y is inverted in screen space
+    
+    // 4. Add container's global offset (rect.left/top) for absolute positioning on document.body
+    const finalX = x + rect.left;
+    const finalY = y + rect.top;
+    
+    label.style.opacity = 1; 
+    label.style.left = `${finalX}px`; 
+    label.style.top = `${finalY}px`; 
+}
+
+function updateStats() {
+    const statBox = document.getElementById('stats');
+    const velocity = (299792 + Math.random()*100).toFixed(0);
+    const dist = (149.6 - (time * 0.01)).toFixed(6);
+    
+    statBox.innerHTML = `
+    <strong>FLIGHT VECTOR [ACTIVE]</strong>
+    -------------------
+    HEADING:   274.5° MARK 6
+    VELOCITY:  ${velocity} KM/S
+    SECTOR:    ORION-CYGNUS
+    -------------------
+    WAYPOINT LOCK:
+    > DIST: ${dist} AU
+    > HASH: 0x${Math.floor(time*1000).toString(16).toUpperCase()}
+    -------------------
+    GEOMETRIC FIELD: ONLINE
+    ABLATIVE SHIELD: ACTIVE
+    `;
+}
+
+// ======================= UI & INTERACTION =======================
+
+function log(s){ const l = document.getElementById('log'); l.innerText = `[${new Date().toLocaleTimeString()}] ${s}\n`+l.innerText; }
 async function sha256hex(str){ const enc = new TextEncoder().encode(str); const hash = await crypto.subtle.digest('SHA-256', enc); return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join(''); }
 
-// interactions
-const genesisBtn = document.getElementById('genesisBtn'); const genesisHashInput = document.getElementById('genesisHash');
+window.addEventListener('resize', () => {
+    camera.aspect = container.clientWidth / container.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(container.clientWidth, container.clientHeight);
+});
 
-gensisBtn.addEventListener('click', async ()=>{ const p = document.getElementById('genesisPrompt').value; const t = Date.now().toString(); const gen = await sha256hex(p + '|' + t); genesisHashInput.value = gen; log('Generated genesis: '+gen.slice(0,16)); spawnAgents(gen); });
+document.getElementById('genesisBtn').addEventListener('click', async ()=>{
+  const prompt = document.getElementById('genesisPrompt').value; 
+  const hash = await sha256hex(prompt);
+  document.getElementById('genesisHash').value = hash.substring(0,16);
+  log(`COURSE PLOTTED: ${hash.substring(0,8)}...`);
+  spawnAgents3D(hash);
+  gsap.fromTo(trajectoryLine.scale, {x:0}, {x:1, duration:1, ease:"power2.out"});
+});
 
-document.getElementById('probeModels').addEventListener('click', async ()=>{ try{ const res = await fetch('/api/models'); const j=await res.json(); log('Ollama models: '+(j.models||j).length||JSON.stringify(j)); }catch(e){ log('Probe failed: '+e.message); } });
+document.getElementById('runCycle').addEventListener('click', async ()=>{
+  const ollamaUrl = document.getElementById('ollamaUrl').value;
+  const selectedModel = document.getElementById('modelSelect').value;
+  const genesisPrompt = document.getElementById('genesisPrompt').value;
+  const runCycleButton = document.getElementById('runCycle');
 
-document.getElementById('runCycle').addEventListener('click', async ()=>{ await runOneCycle(); });
+  log(`Querying Navigation Stations...`);
+  runCycleButton.disabled = true; // Disable button during polling
+  document.getElementById('agentOutput').innerText = 'Polling agents... Stand by.';
 
-async function runOneCycle(){
-  const gen = genesisHashInput.value || await sha256hex(document.getElementById('genesisPrompt').value + '|' + Date.now());
-  const promptBase = `GENESIS:${gen}\nObserve vector and submit short report.`;
-  const reqs = agents.map((a,i)=> runAgent(a, promptBase));
-  const results = await Promise.all(reqs);
-  const entropies = results.map(r=>computeEntropy(r.text));
-  const minIdx = entropies.indexOf(Math.min(...entropies));
-  log('Cycle done. Best agent: '+agents[minIdx].name+' ('+agents[minIdx].model+') entropy='+entropies[minIdx].toFixed(3));
-  document.getElementById('agentOutput').innerText = results.map((r,i)=>`${agents[i].name}@${agents[i].model}: ${r.text.slice(0,200)}`).join('\n\n');
-  const mem = JSON.parse(localStorage.getItem('ufo_mem')||'[]'); mem.push({gen,results,entropies,ts:Date.now()}); localStorage.setItem('ufo_mem', JSON.stringify(mem.slice(-200)));
-  renderStats(entropies);
-}
+  const tasks = agentsData.map(async (a) => {
+    gsap.to(a.mesh.scale, {x:1.5, y:1.5, z:1.5, duration:0.2, yoyo:true, repeat:1});
+    try {
+        const agentPrompt = `You are ${a.name} (Navigation Officer) on AEGIS. The current mission objective is: "${genesisPrompt}". Report current vector status, making sure to relate it to the mission objective.`;
+        const res = await fetch(`${ollamaUrl}/api/generate`, {
+            method:'POST',
+            body: JSON.stringify({model: selectedModel, prompt: agentPrompt, stream: false})
+        });
+        if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(`API error for ${a.name}: ${res.status} - ${errorText}`);
+        }
+        const data = await res.json();
+        return `[${a.name}]: ${data.response}`;
+    } catch(e) {
+        log(`ERROR polling ${a.name}: ${e.message}`); // Log the actual error
+        await new Promise(r => setTimeout(r, 200 + Math.random()*800)); // Simulate delay for fallback
+        const responses = [
+            "Vector alignment at 99.9%.",
+            "Geometric field holding steady.",
+            "Ablative shield nominal, 100% integrity.",
+            "Chronologic drift minimal.",
+            "Holding course. Engines optimal.",
+            "Waypoint Delta in visual range."
+        ];
+        return `[${a.name}]: ${responses[Math.floor(Math.random()*responses.length)]} (Fallback)`;
+    }
+  });
 
-async function runAgent(agent, promptBase){ const ollamaUrl = document.getElementById('ollamaUrl').value; const role = agent.name; const model = agent.model; const prompt = `${promptBase}\nRole: ${role}\nModel: ${model}\nTask: produce short vector observation and a numeric score`;
-  if(!ollamaUrl){ const text = pseudoRespond(prompt); return {text}; }
-  try{ const res = await fetch('/api/generate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({model: model, prompt: prompt, max_tokens:120}) }); const j = await res.json(); const text = (j.output || j.result || JSON.stringify(j)).toString(); return {text}; }catch(e){ return {text: pseudoRespond(prompt)}; }
-}
-function pseudoRespond(prompt){ const h = Array.from(new TextEncoder().encode(prompt)).reduce((s,b)=> (s*31 + b) % 1000000007, 7); const score = (h % 100)/100;
-return `SIMULATED RESPONSE score=${score.toFixed(2)} | summary: agent observed vector magnitude ${(score*10).toFixed(2)}`; }
-function computeEntropy(text){ const freq = {}; for(const c of text){ freq[c] = (freq[c]||0)+1; } let s=0; const n=text.length; for(const k in freq){ const p=freq[k]/n; s -= p * Math.log2(p); } return s; }
-function renderStats(ent){ const el = document.getElementById('stats'); el.innerText = 'entropies:\n'+ent.map((v,i)=>`${agents[i].name.padEnd(12)} ${v.toFixed(3)}
-`).join(''); }
+  const results = await Promise.all(tasks);
+  document.getElementById('agentOutput').innerText = results.join('\n\n');
+  log("Navigation poll complete.");
+  runCycleButton.disabled = false; // Re-enable button
+});
 
-// memory controls
-document.getElementById('saveMemory').addEventListener('click', ()=>{ const mem=localStorage.getItem('ufo_mem')||'[]'; const blob = new Blob([mem],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='ufo_memory.json'; a.click(); log('Memory exported'); });
-document.getElementById('reloopMemory').addEventListener('click', ()=>{ const mem = JSON.parse(localStorage.getItem('ufo_mem')||'[]'); if(!mem.length){ log('no memory'); return; }
-const best = mem.map(m=>({m,score:Math.min(...m.entropies)})).sort((a,b)=>a.score-b.score).slice(0,6);
-log('Re-looped top strategies: '+best.map(b=>new Date(b.m.ts).toISOString()).join(', ')); });
+document.getElementById('probeModels').addEventListener('click', async ()=>{
+  log('Pinging Nav Computer...');
+  const ollamaUrl = document.getElementById('ollamaUrl').value;
+  try {
+    const response = await fetch(`${ollamaUrl}/api/tags`);
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    const modelSelect = document.getElementById('modelSelect');
+    modelSelect.innerHTML = ''; // Clear existing options
+    data.models.forEach(model => {
+        const option = document.createElement('option');
+        option.value = model.name;
+        option.textContent = model.name;
+        modelSelect.appendChild(option);
+    });
+    log(`Nav Computer responded. Found ${data.models.length} models.`);
+  } catch (e) {
+    log(`ERROR: Nav Computer offline or unresponsive: ${e.message}`);
+  }
+});
 
-// init
-spawnAgents('initial'); draw();
+// Start
+log("SYSTEM STARTUP: NAVIGATION ONLINE.");
+spawnAgents3D('init');
+animate();
 
 </script>
 </body>

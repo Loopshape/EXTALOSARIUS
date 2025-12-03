@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>UFO — Unlimited-Force-Observer Dashboard</title>
+<style>
+:root{--bg:#000;--fg:#cfe;--accent:#ff8a00}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:Inter,Arial,Helvetica,sans-serif}
+.app{display:flex;height:100vh;gap:12px;padding:12px;box-sizing:border-box}
+aside{width:360px;background:#07101855;border-radius:8px;padding:12px;display:flex;flex-direction:column}
+main{flex:1;display:flex;flex-direction:column}
+canvas{width:100%;height:100%;background:#000;border-radius:8px;display:block}
+h1{margin:0 0 8px 0;font-size:18px}
+.controls{display:flex;gap:8px;flex-wrap:wrap}
+.card{background:#08131a88;padding:8px;border-radius:6px;margin-bottom:8px}
+label{display:block;font-size:12px;color:#9fb}
+select,input,button,textarea{width:100%;padding:8px;border-radius:6px;border:1px solid #234;color:#dff;background:transparent}
+.agent-list{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.agent{padding:6px;border-radius:6px;background:#021;display:flex;flex-direction:column}
+.log{height:140px;overflow:auto;background:#0002;padding:6px;border-radius:6px;font-family:monospace;font-size:12px}
+.ufo-label{position:absolute;padding:4px 8px;border-radius:6px;background:rgba(10,10,12,0.85);color:#cff;font-family:monospace;font-size:12px;pointer-events:none;transform:translate(-50%,-50%);}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <h1>UFO Dashboard</h1>
+    <div class="card">
+      <label>Genesis prompt</label>
+      <textarea id="genesisPrompt" rows="3">Observe force vectors, create genesis-hash and spawn 8 agents across 2π</textarea>
+      <button id="genesisBtn">Create Genesis & Spawn Agents</button>
+      <div style="margin-top:8px;"><label>Genesis hash</label><input id="genesisHash" readonly /></div>
+    </div>
+
+    <div class="card">
+      <label>Model pool (local Ollama names)</label>
+      <div class="controls">
+        <select id="modelSelect">
+          <option value="cube">cube</option>
+          <option value="core">core</option>
+          <option value="loop">loop</option>
+          <option value="wave">wave</option>
+          <option value="line">line</option>
+          <option value="coin">coin</option>
+          <option value="code">code</option>
+          <option value="work">work</option>
+        </select>
+        <button id="probeModels">Probe Models</button>
+      </div>
+      <div style="margin-top:8px"><label>Ollama API URL</label><input id="ollamaUrl" placeholder="http://localhost:11434" /></div>
+    </div>
+
+    <div class="card">
+      <label>Agents</label>
+      <div class="agent-list" id="agents"></div>
+      <div style="margin-top:8px"><button id="runCycle">Run One Cycle (parallel)</button></div>
+    </div>
+
+    <div class="card">
+      <label>Memory & Rehash</label>
+      <div style="display:flex;gap:6px"><button id="saveMemory">Save Memory</button><button id="reloopMemory">Re-loop Memory</button></div>
+      <div class="log" id="log"></div>
+    </div>
+  </aside>
+
+  <main>
+    <canvas id="gl"></canvas>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <div class="card" style="flex:1">
+        <label>Selected agent output</label>
+        <div id="agentOutput" class="log"></div>
+      </div>
+      <div class="card" style="width:320px">
+        <label>Stats</label>
+        <div id="stats" style="font-family:monospace;font-size:13px"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script type="module">
+// ======================= UFO Dashboard JS =======================
+
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl');
+if(!gl){ alert('WebGL not supported'); }
+
+function resize(){ 
+  canvas.width = canvas.clientWidth * devicePixelRatio; 
+  canvas.height = canvas.clientHeight * devicePixelRatio; 
+  gl.viewport(0,0,canvas.width,canvas.height); 
+}
+window.addEventListener('resize', resize); resize();
+
+// --- Geometry helpers ---
+function makeSphereVerts(radius=1, lat=24, lon=48){
+  const verts=[];
+  for(let i=0;i<=lat;i++){
+    const theta = i/lat*Math.PI;
+    for(let j=0;j<=lon;j++){
+      const phi = j/lon*2*Math.PI;
+      const x = radius*Math.sin(theta)*Math.cos(phi);
+      const y = radius*Math.cos(theta);
+      const z = radius*Math.sin(theta)*Math.sin(phi);
+      verts.push(x,y,z);
+    }
+  }
+  return new Float32Array(verts);
+}
+const sphereVerts = makeSphereVerts(0.92, 36, 72);
+
+// --- Shaders ---
+const vs_point = `attribute vec3 pos; uniform mat4 mvp; uniform float pointSize; void main(){ gl_Position = mvp * vec4(pos,1.0); gl_PointSize = pointSize; }`;
+const fs_point = `precision mediump float; uniform vec3 color; void main(){ float d = length(gl_PointCoord - vec2(0.5)); if(d>0.5) discard; gl_FragColor = vec4(color,1.0); }`;
+const vs_line = `attribute vec3 pos; uniform mat4 mvp; void main(){ gl_Position = mvp * vec4(pos,1.0); }`;
+const fs_line = `precision mediump float; uniform vec3 color; void main(){ gl_FragColor = vec4(color,1.0); }`;
+function compile(type, src){ const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s); return s; }
+function createProgram(vs_src, fs_src){ const p = gl.createProgram(); gl.attachShader(p, compile(gl.VERTEX_SHADER, vs_src)); gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs_src)); gl.linkProgram(p); if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw gl.getProgramInfoLog(p); return p; }
+const progPoint = createProgram(vs_point, fs_point);
+const progLine = createProgram(vs_line, fs_line);
+const posLocPoint = gl.getAttribLocation(progPoint,'pos'); const mvpLocPoint = gl.getUniformLocation(progPoint,'mvp'); const colorLocPoint = gl.getUniformLocation(progPoint,'color'); const pointSizeLoc = gl.getUniformLocation(progPoint,'pointSize');
+const posLocLine = gl.getAttribLocation(progLine,'pos'); const mvpLocLine = gl.getUniformLocation(progLine,'mvp'); const colorLocLine = gl.getUniformLocation(progLine,'color');
+
+// --- Buffers ---
+const sphereVBO = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, sphereVBO); gl.bufferData(gl.ARRAY_BUFFER, sphereVerts, gl.STATIC_DRAW);
+function createLineBuffer(arr){ const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, arr, gl.DYNAMIC_DRAW); return b; }
+
+// --- Math ---
+function perspective(fovy, aspect, near, far){ const f = 1/Math.tan(fovy/2); const nf = 1/(near - far); const out=new Float32Array(16);
+ out[0]=f/aspect; out[5]=f; out[10]=(far+near)*nf; out[11]=-1; out[14]=2*far*near*nf; out[15]=0; return out; }
+function identity(){ const o=new Float32Array(16); o[0]=1;o[5]=1;o[10]=1;o[15]=1; return o; }
+function mul(a,b){ const o=new Float32Array(16); for(let i=0;i<4;i++) for(let j=0;j<4;j++){ let s=0; for(let k=0;k<4;k++) s+=a[k*4+j]*b[i*4+k]; o[i*4+j]=s; } return o; }
+function translate(tx,ty,tz){ const m=identity(); m[12]=tx; m[13]=ty; m[14]=tz; return m; }
+function rotateY(a){ const c=Math.cos(a), s=Math.sin(a); const m=identity(); m[0]=c; m[2]=s; m[8]=-s; m[10]=c; return m; }
+function projectPos(pos, mvp, w, h){ const x = pos[0], y=pos[1], z=pos[2]; const vx = mvp[0]*x + mvp[4]*y + mvp[8]*z + mvp[12]; const vy = mvp[1]*x + mvp[5]*y + mvp[9]*z + mvp[13]; const vz = mvp[3]*x + mvp[7]*y + mvp[11]*z + mvp[15]; if(vz===0) return [0,0,-1]; const nx = vx / vz; const ny = vy / vz; return [(nx*0.5+0.5)*w, (1-(ny*0.5+0.5))*h, vz]; }
+
+// --- Agents ---
+const agentNames = ['predictor','adviser','coordinator','constellator','marketer','navigator','communicator','doctor'];
+const models = ['cube','core','loop','wave','line','coin','code','work'];
+let agents = [];
+
+function hsvToRgb(h,s,v){ const i=Math.floor(h*6); const f=h*6-i; const p=v*(1-s); const q=v*(1-f*s); const t=v*(1-(1-f)*s); let r,g,b; switch(i%6){case 0:r=v;g=t;b=p;break;case 1:r=q;g=v;b=p;break;case 2:r=p;g=v;b=t;break;case 3:r=p;g=q;b=v;break;case 4:r=t;g=p;b=v;break;case 5:r=v;g=p;b=q;break;} return [r,g,b]; }
+
+function spawnAgents(genHash){
+  document.querySelectorAll('.ufo-label').forEach(n=>n.remove());
+  agents = [];
+  const n = 8;
+  for(let i=0;i<n;i++){
+    const phi = (i/n)*Math.PI*2; const r = 1.35; const ang = phi; const model = models[i%models.length]; const name = agentNames[i%agentNames.length];
+    const hue = i/n; const col = hsvToRgb(hue,0.9,0.95);
+    const pos = [Math.cos(ang)*r, 0.0, Math.sin(ang)*r];
+    const label = document.createElement('div'); label.className='ufo-label'; label.innerText = `${name} • ${model}`;
+    document.body.appendChild(label);
+    agents.push({id:i,name,model,orbitRadius:r,orbitPhase:ang,color:col,label,position:pos,trail:[]});
+  }
+  renderAgentsList();
+}
+
+function renderAgentsList(){ 
+  const wrap = document.getElementById('agents'); wrap.innerHTML='';
+  agents.forEach(a=>{
+    const el = document.createElement('div'); el.className='agent';
+    el.innerHTML = `<strong>${a.name}</strong><small>${a.model}</small><div style="font-size:12px;margin-top:6px">orbit r=${a.orbitRadius.toFixed(2)}</div>`;
+    wrap.appendChild(el);
+  }); 
+}
+
+// --- π Rails ---
+const piRails = []; (function(){ const rails = 7; for(let r=0;r<rails;r++){ const points=[]; const offset = (r - (rails-1)/2) * 0.18; for(let t=-3;t<=3;t+=0.2){ const x = -2 + t*0.9; const y = -1.5 + offset + Math.sin(t*0.6)*0.15; const z = -2 + t*0.4; points.push(x,y,z); } piRails.push(new Float32Array(points)); }})();
+const piBuffers = piRails.map(arr=>createLineBuffer(arr));
+
+// --- Draw ---
+let angle = 0; const orbitSpeed = 0.002;
+function draw(){
+  resize(); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST);
+  const aspect = canvas.width / canvas.height; const proj = perspective(Math.PI/4, aspect, 0.1, 100);
+  const view = translate(0,0,-6.0); const model = mul(rotateY(angle*0.4), identity());
+  const mvp = mul(proj, mul(view, model));
+
+  // Sphere
+  gl.useProgram(progPoint);
+  gl.bindBuffer(gl.ARRAY_BUFFER, sphereVBO); gl.enableVertexAttribArray(posLocPoint); gl.vertexAttribPointer(posLocPoint,3,gl.FLOAT,false,0,0);
+  gl.uniformMatrix4fv(mvpLocPoint,false,mvp);
+  gl.uniform3f(colorLocPoint,0.12,0.45,0.82); gl.uniform1f(pointSizeLoc, 1.8 * devicePixelRatio);
+  gl.drawArrays(gl.POINTS, 0, sphereVerts.length/3);
+
+  // π Rails
+  gl.useProgram(progLine); gl.uniformMatrix4fv(mvpLocLine,false,mvp); gl.uniform3f(colorLocLine, 0.25,0.1,0.7);
+  piBuffers.forEach((buf,idx)=>{ gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.enableVertexAttribArray(posLocLine); gl.vertexAttribPointer(posLocLine,3,gl.FLOAT,false,0,0); gl.drawArrays(gl.LINE_STRIP, 0, piRails[idx].length/3); });
+
+  // Agents
+  gl.useProgram(progPoint); gl.uniformMatrix4fv(mvpLocPoint,false,mvp);
+  agents.forEach((a,i)=>{
+    a.orbitPhase += orbitSpeed * (1 + i*0.02);
+    const ox = Math.cos(a.orbitPhase) * a.orbitRadius;
+    const oy = Math.sin(a.orbitPhase*0.4) * 0.18;
+    const oz = Math.sin(a.orbitPhase) * a.orbitRadius;
+    a.position = [ox, oy, oz];
+    a.trail.unshift([ox*0.9, oy*0.9, oz*0.9]); if(a.trail.length>128) a.trail.pop();
+    const arr = new Float32Array(a.position); const tmp = createLineBuffer(arr);
+    gl.bindBuffer(gl.ARRAY_BUFFER,tmp); gl.enableVertexAttribArray(posLocPoint); gl.vertexAttribPointer(posLocPoint,3,gl.FLOAT,false,0,0);
+    gl.uniform3f(colorLocPoint, a.color[0], a.color[1], a.color[2]); gl.uniform1f(pointSizeLoc, 12*devicePixelRatio);
+    gl.drawArrays(gl.POINTS,0,1); gl.deleteBuffer(tmp);
+  });
+
+  // Trails
+  gl.useProgram(progLine); gl.uniformMatrix4fv(mvpLocLine,false,mvp);
+  agents.forEach((a)=>{
+    if(a.trail.length<2) return;
+    const flat = new Float32Array(a.trail.length*3);
+    for(let k=0;k<a.trail.length;k++){ flat[k*3]=a.trail[k][0]; flat[k*3+1]=a.trail[k][1]; flat[k*3+2]=a.trail[k][2]; }
+    const b=createLineBuffer(flat); gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.enableVertexAttribArray(posLocLine); gl.vertexAttribPointer(posLocLine,3,gl.FLOAT,false,0,0);
+    gl.uniform3f(colorLocLine, a.color[0]*0.9,a.color[1]*0.9,a.color[2]*0.9);
+    gl.drawArrays(gl.LINE_STRIP,0,a.trail.length); gl.deleteBuffer(b);
+  });
+
+  // Labels
+  agents.forEach(a=>{
+    const scr = projectPos(a.position,mvp,canvas.width,canvas.height);
+    const label = a.label; if(!label) return;
+    if(scr[2]<0){ label.style.display='none'; } else { label.style.display='block'; label.style.left=(scr[0]/devicePixelRatio)+'px'; label.style.top=(scr[1]/devicePixelRatio)+'px'; }
+  });
+
+  angle+=0.003; requestAnimationFrame(draw);
+}
+
+// --- UI helpers ---
+function log(s){ const l = document.getElementById('log'); l.innerText = `[${new Date().toISOString()}] ${s}\n`+l.innerText; }
+async function sha256hex(str){ const enc = new TextEncoder().encode(str); const hash = await crypto.subtle.digest('SHA-256', enc); return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+
+// --- Interactions ---
+document.getElementById('genesisBtn').addEventListener('click', async ()=>{
+  const prompt = document.getElementById('genesisPrompt').value; const hash = await sha256hex(prompt);
+  document.getElementById('genesisHash').value = hash;
+  spawnAgents(hash);
+});
+
+document.getElementById('runCycle').addEventListener('click', async ()=>{
+  const ollamaUrl = document.getElementById('ollamaUrl').value || 'http://localhost:11434/api';
+  const tasks = agents.map(a=>{
+    const payload = {model:a.model,prompt:`GENESIS:${document.getElementById('genesisHash').value}\nAgent ${a.name} (${a.model}) observe vector and report shortly.`};
+    return fetch(`${ollamaUrl}/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      .then(r=>r.json()).then(data=>{a.lastOutput=data?.completion||pseudoRespond(a); return a.lastOutput;})
+      .catch(()=>{a.lastOutput=pseudoRespond(a); return a.lastOutput;});
+  });
+  const results = await Promise.all(tasks);
+  results.forEach((res,i)=>log(`${agents[i].name}: ${res.substring(0,80)}...`));
+  document.getElementById('agentOutput').innerText = results.map((r,i)=>`${agents[i].name}:\n${r}`).join('\n\n');
+  const stats = agents.map(a=>`${a.name}: entropy=${computeEntropy(a.lastOutput).toFixed(2)}`).join('\n');
+  document.getElementById('stats').innerText = stats;
+});
+
+document.getElementById('probeModels').addEventListener('click', async ()=>{
+  const ollamaUrl = document.getElementById('ollamaUrl').value || 'http://localhost:11434/api';
+  try{ const res = await fetch(`${ollamaUrl}/tags`); const data = await res.json(); log(`Models: ${JSON.stringify(data)}`); }catch(e){log('Probe failed');}
+});
+
+document.getElementById('saveMemory').addEventListener('click', ()=>{ localStorage.setItem('ufoMemory',JSON.stringify(agents)); log('Memory saved'); });
+document.getElementById('reloopMemory').addEventListener('click', ()=>{ const mem = JSON.parse(localStorage.getItem('ufoMemory')||'[]'); agents=mem; renderAgentsList(); log('Memory re-looped'); });
+
+// --- Helpers ---
+function pseudoRespond(a){ const phrases = ['Vector stable','Observation complete','Data coherent','Entropy low','Signal registered']; return phrases[Math.floor(Math.random()*phrases.length)]; }
+function computeEntropy(str){ if(!str) return 0; const freq={}; for(let c of str) freq[c]=(freq[c]||0)+1; const n=str.length; let H=0; for(let k in freq){ const p=freq[k]/n; H-=p*Math.log2(p); } return H; }
+
+draw();
+</script>
+</body>
+</html>
+
